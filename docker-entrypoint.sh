@@ -13,8 +13,8 @@ if command -v uv >/dev/null 2>&1; then
   uv sync || true
 fi
 
-echo "Applying migrations and starting server on 0.0.0.0:8511"
+echo "Applying migrations and starting server on 0.0.0.0:8000"
 python manage.py migrate --noinput || true
 python manage.py collectstatic --noinput || true
 
-exec uv run python manage.py runserver 0.0.0.0:8511
+exec uv run python manage.py runserver 0.0.0.0:8000

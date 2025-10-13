@@ -1,6 +1,6 @@
 # 🐳 Docker Setup - Daredevil API
 
-API de transcrição rodando em container Docker na porta **8511**.
+API de transcrição rodando em container Docker na porta **8000**.
 
 ## 🚀 Quick Start
 
@@ -40,7 +40,7 @@ O projeto usa **UV** como gerenciador de dependências. O processo de instalaç�
    - Executa `uv sync` para instalar todas as dependências do `pyproject.toml`
    - Cria/atualiza o ambiente virtual `.venv`
    - Aplica migrações do Django
-   - Inicia o servidor na porta 8511
+   - Inicia o servidor na porta 8000
 
 2. **Fluxo de instalação**:
    ```bash
@@ -99,14 +99,14 @@ docker compose logs web | grep -i error
 
 ## 🌐 Testando a API
 
-Após subir o container, a API estará disponível em `http://localhost:8511`
+Após subir o container, a API estará disponível em `http://localhost:8000`
 
 ```bash
 # Testar health check
-curl http://localhost:8511/api/health
+curl http://localhost:8000/api/health
 
 # Testar transcrição (exemplo)
-curl -X POST "http://localhost:8511/api/transcribe" \
+curl -X POST "http://localhost:8000/api/transcribe" \
   -F "file=@seu_audio.opus" \
   -F "language=pt"
 ```
@@ -132,10 +132,10 @@ PYTHONUNBUFFERED=1                   # Logs sem buffer
 # Ver logs completos
 docker compose logs web
 
-# Verificar se a porta 8511 está em uso
-lsof -i :8511
+# Verificar se a porta 8000 está em uso
+lsof -i :8000
 # ou
-netstat -tuln | grep 8511
+netstat -tuln | grep 8000
 ```
 
 ### Erro de instalação de dependências (torch/whisper)
@@ -184,7 +184,7 @@ Para ambiente de produção, considere:
 
 1. **Usar Gunicorn** em vez de `runserver`:
    ```bash
-   uv run gunicorn config.wsgi:application --bind 0.0.0.0:8511
+   uv run gunicorn config.wsgi:application --bind 0.0.0.0:8000
    ```
 
 2. **Configurar ALLOWED_HOSTS** adequadamente:
@@ -202,7 +202,7 @@ Para ambiente de produção, considere:
 4. **Adicionar healthcheck**:
    ```yaml
    healthcheck:
-     test: ["CMD", "curl", "-f", "http://localhost:8511/api/health"]
+     test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
      interval: 30s
      timeout: 10s
      retries: 3
@@ -216,6 +216,6 @@ Para ambiente de produção, considere:
 
 ---
 
-**Porta exposta**: 8511  
-**Comando de execução**: `uv run python manage.py runserver 0.0.0.0:8511`  
+**Porta exposta**: 8000  
+**Comando de execução**: `uv run python manage.py runserver 0.0.0.0:8000`  
 **Dependências instaladas via**: `uv sync` (automático no entrypoint)
