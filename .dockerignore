@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+.git/
+.pytest_cache/
+node_modules/
+env/
+build/
+dist/
+*.sqlite3
+*.log
+*.opus
+WhatsApp Audio*
+media/
+*.tar.gz

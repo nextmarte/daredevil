@@ -1,7 +1,16 @@
 [project]
 name = "daredevil"
 version = "0.1.0"
-description = "Add your description here"
+description = "API de transcrição de áudio em português usando Django Ninja e Whisper"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "django>=5.1.2",
+    "django-ninja>=1.3.0",
+    "openai-whisper>=20231117",
+    "pydub>=0.25.1",
+    "python-multipart>=0.0.9",
+    "ffmpeg-python>=0.2.0",
+    "python-dotenv>=1.0.1",
+    "requests>=2.32.5",
+]

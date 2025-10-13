@@ -1,10 +1,78 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
 dist/
 wheels/
 *.egg-info
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+.installed.cfg
+*.egg
 
 # Virtual environments
 .venv
+venv/
+ENV/
+env/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media
+/staticfiles
+
+# Environment variables
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Whisper models cache
+~/.cache/whisper/
+
+# Temporary audio files
+/tmp/
+*.wav
+*.mp3
+*.opus
+*.ogg
+*.m4a
+*.aac
+*.mp4
+*.flac
+*.webm
+
+# But keep example files in docs/examples (if needed)
+!docs/examples/*.mp3
+!docs/examples/*.wav
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Documentation
+docs/_build/
+site/
+.env.example
