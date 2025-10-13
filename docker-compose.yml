@@ -12,7 +12,7 @@ services:
       - WHISPER_MODEL=medium
       - MAX_AUDIO_SIZE_MB=25
       - TEMP_AUDIO_DIR=/tmp/daredevil
-      - ALLOWED_HOSTS=*,http://cid-uff.net:8511/
+      - ALLOWED_HOSTS=*,http://cid-uff.net
       - PYTHONUNBUFFERED=1
     volumes:
       - ./:/app
