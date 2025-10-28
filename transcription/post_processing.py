@@ -140,31 +140,38 @@ class SpeakerIdentifier:
             return []
         
         processed_segments = []
-        current_speaker_id = "Speaker_A"
         speaker_ids = ["Speaker_A", "Speaker_B", "Speaker_C", "Speaker_D"]
         speaker_index = 0
+        current_speaker_id = speaker_ids[speaker_index]
         
         for i, segment in enumerate(segments):
-            # Detectar mudança de interlocutor baseado em pausas longas
+            text = segment.get('text', '').strip()
+            should_change_speaker = False
+            
             if i > 0:
                 prev_segment = segments[i - 1]
+                prev_text = prev_segment.get('text', '').strip()
                 pause_duration = segment.get('start', 0) - prev_segment.get('end', 0)
                 
-                # Se pausa maior que 1.5 segundos, pode ser mudança de interlocutor
-                if pause_duration > 1.5:
-                    speaker_index = (speaker_index + 1) % len(speaker_ids)
-                    current_speaker_id = speaker_ids[speaker_index]
+                # Critério 1: Pausa maior que 1.0 segundo
+                if pause_duration > 1.0:
+                    should_change_speaker = True
+                
+                # Critério 2: Pergunta seguida de afirmação ou vice-versa
+                is_current_question = SpeakerIdentifier._is_question(text)
+                is_prev_question = SpeakerIdentifier._is_question(prev_text)
+                
+                if is_current_question != is_prev_question:
+                    should_change_speaker = True
+                
+                # Critério 3: Pergunta após pergunta também indica mudança
+                elif is_current_question and is_prev_question:
+                    should_change_speaker = True
             
-            # Detectar mudanças baseadas em padrões linguísticos
-            text = segment.get('text', '').strip()
-            
-            # Perguntas geralmente indicam mudança de interlocutor
-            if i > 0 and SpeakerIdentifier._is_question(text):
-                # Verificar se não foi pergunta do mesmo interlocutor
-                prev_text = segments[i - 1].get('text', '').strip()
-                if not SpeakerIdentifier._is_question(prev_text):
-                    speaker_index = (speaker_index + 1) % len(speaker_ids)
-                    current_speaker_id = speaker_ids[speaker_index]
+            # Mudar de interlocutor se necessário
+            if should_change_speaker:
+                speaker_index = (speaker_index + 1) % len(speaker_ids)
+                current_speaker_id = speaker_ids[speaker_index]
             
             processed_segments.append(ProcessedSegment(
                 start=segment.get('start', 0),
