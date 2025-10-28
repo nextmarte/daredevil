@@ -5,6 +5,7 @@ import os
 import time
 import hashlib
 import logging
+import shutil
 from pathlib import Path
 from typing import Tuple, Optional, Dict
 
@@ -33,9 +34,26 @@ class AudioProcessor:
     }
 
     @staticmethod
+    def check_ffmpeg_installed():
+        """Verifica se ffmpeg/ffprobe estão instalados"""
+        if not shutil.which('ffmpeg'):
+            raise RuntimeError(
+                "ffmpeg não encontrado. Instale com: "
+                "sudo apt-get install ffmpeg (Linux) ou brew install ffmpeg (macOS)"
+            )
+        if not shutil.which('ffprobe'):
+            raise RuntimeError(
+                "ffprobe não encontrado. Instale com: "
+                "sudo apt-get install ffmpeg (Linux) ou brew install ffmpeg (macOS)"
+            )
+
+    @staticmethod
     def get_audio_info(file_path: str) -> AudioInfo:
         """Extrai informações do arquivo de áudio"""
         try:
+            # Verificar dependências antes de processar
+            AudioProcessor.check_ffmpeg_installed()
+
             audio = AudioSegment.from_file(file_path)
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
 
@@ -46,9 +64,19 @@ class AudioProcessor:
                 channels=audio.channels,
                 file_size_mb=round(file_size_mb, 2)
             )
+        except RuntimeError as e:
+            # Re-raise erros de dependências
+            raise
         except Exception as e:
             logger.error(f"Erro ao extrair info do áudio: {e}")
-            raise
+            # Retornar info básica se falhar
+            return AudioInfo(
+                format='wav',
+                duration=0,
+                sample_rate=16000,
+                channels=1,
+                file_size_mb=0
+            )
 
     @staticmethod
     def validate_audio_file(file_path: str, max_size_mb: int = None) -> Tuple[bool, Optional[str]]:

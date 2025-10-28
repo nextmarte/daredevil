@@ -6,6 +6,7 @@ import time
 import logging
 from typing import List, Optional
 from pathlib import Path
+import shutil
 
 from ninja import NinjaAPI, File, Form
 from ninja.files import UploadedFile
@@ -46,12 +47,21 @@ def health_check(request: HttpRequest):
         logger.error(f"Health check falhou: {e}")
         status = "unhealthy"
 
+    ffmpeg_available = shutil.which('ffmpeg') is not None
+    ffprobe_available = shutil.which('ffprobe') is not None
+
     return HealthResponse(
         status=status,
         whisper_model=settings.WHISPER_MODEL,
         supported_formats=settings.SUPPORTED_AUDIO_FORMATS,
         max_file_size_mb=settings.MAX_AUDIO_SIZE_MB,
-        temp_dir=settings.TEMP_AUDIO_DIR
+        temp_dir=settings.TEMP_AUDIO_DIR,
+        dependencies={
+            "ffmpeg": ffmpeg_available,
+            "ffprobe": ffprobe_available,
+        },
+    model_loaded=WhisperTranscriber._model is not None,
+        version="1.0.0"
     )
 
 

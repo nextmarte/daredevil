@@ -32,9 +32,14 @@ DEBUG = True
 
 # Configurar ALLOWED_HOSTS a partir de variável de ambiente
 # Aceita formato: "host1,host2,host3" ou "*" para aceitar todos
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',') if os.getenv('ALLOWED_HOSTS') else ['localhost', '127.0.0.1']
-if '*' in ALLOWED_HOSTS:
-    ALLOWED_HOSTS = ['*']
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    if '*' in allowed_hosts_env:
+        ALLOWED_HOSTS = ['*']
+    else:
+        ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(',') if host.strip()]
+else:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'cid-uff.net']
 
 
 # Application definition
@@ -126,6 +131,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -134,7 +140,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Whisper Configuration
 WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'medium')
-MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 25))
+MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 100))
 TEMP_AUDIO_DIR = os.getenv('TEMP_AUDIO_DIR', '/tmp/daredevil')
 ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
 

@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Suprimir SyntaxWarnings do pydub antes de qualquer import Python
+export PYTHONWARNINGS="ignore::SyntaxWarning"
+
 # Instala ffmpeg no ambiente alpine se faltar
 if command -v apk >/dev/null 2>&1; then
   echo "Installing ffmpeg via apk..."
@@ -14,7 +17,6 @@ if command -v uv >/dev/null 2>&1; then
 fi
 
 echo "Applying migrations and starting server on 0.0.0.0:8000"
-python manage.py migrate --noinput || true
-python manage.py collectstatic --noinput || true
+uv run python manage.py migrate --noinput
 
 exec uv run python manage.py runserver 0.0.0.0:8000

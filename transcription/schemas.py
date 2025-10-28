@@ -1,7 +1,7 @@
 """
 Schemas Pydantic para validação de entrada e saída da API
 """
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -55,6 +55,15 @@ class HealthResponse(BaseModel):
     supported_formats: List[str] = Field(..., description="Formatos de áudio suportados")
     max_file_size_mb: int = Field(..., description="Tamanho máximo de arquivo permitido")
     temp_dir: str = Field(..., description="Diretório temporário para processamento")
+
+
+class HealthCheckResponse(BaseModel):
+    """Resposta detalhada do health check"""
+    status: str = Field(..., description="Status do serviço (healthy/unhealthy)")
+    whisper_model: str = Field(..., description="Modelo Whisper carregado")
+    model_loaded: bool = Field(..., description="Indica se o modelo está carregado")
+    dependencies: Dict[str, bool] = Field(..., description="Dependências do serviço e seu status")
+    version: str = Field(..., description="Versão do serviço")
 
 
 class BatchTranscriptionResponse(BaseModel):
