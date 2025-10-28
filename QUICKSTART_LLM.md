@@ -44,7 +44,7 @@ print(result.transcription.text)
 # No arquivo .env
 USE_LLM_POST_PROCESSING=true
 LLM_MODEL=qwen3:30b
-OLLAMA_URL=http://localhost:11434/api/generate
+# OLLAMA_HOST=http://localhost:11434  # Opcional, padrão já é localhost:11434
 ```
 
 ## 🧪 Testar Instalação

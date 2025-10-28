@@ -13,7 +13,7 @@ class TestLLMPostProcessingService(unittest.TestCase):
         """Configuração inicial para os testes"""
         self.llm_service = LLMPostProcessingService(
             model_name="qwen3:30b",
-            ollama_url="http://localhost:11434/api/generate"
+            ollama_host=None  # Usa padrão localhost
         )
         
         self.sample_segments = [
@@ -26,7 +26,7 @@ class TestLLMPostProcessingService(unittest.TestCase):
     def test_initialization(self):
         """Testa inicialização do serviço"""
         self.assertEqual(self.llm_service.model_name, "qwen3:30b")
-        self.assertEqual(self.llm_service.ollama_url, "http://localhost:11434/api/generate")
+        self.assertIsNotNone(self.llm_service.client)
     
     def test_build_prompt_all_options(self):
         """Testa construção de prompt com todas as opções habilitadas"""
@@ -54,16 +54,13 @@ class TestLLMPostProcessingService(unittest.TestCase):
         self.assertIn("gramática", prompt.lower())
         self.assertNotIn("interlocutores", prompt.lower())
     
-    @patch('transcription.post_processing.requests.post')
-    def test_process_transcription_success(self, mock_post):
+    @patch('ollama.Client.generate')
+    def test_process_transcription_success(self, mock_generate):
         """Testa processamento bem-sucedido com LLM"""
         # Mock da resposta do Ollama
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_generate.return_value = {
             'response': 'Olá, tudo bem? Sim, e você?'
         }
-        mock_post.return_value = mock_response
         
         corrected_text, processed_segments = self.llm_service.process_transcription(
             segments=self.sample_segments,
@@ -80,25 +77,19 @@ class TestLLMPostProcessingService(unittest.TestCase):
         self.assertEqual(len(processed_segments), 2)
         
         # Verificar que a chamada foi feita corretamente
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        self.assertEqual(call_args[0][0], "http://localhost:11434/api/generate")
-        
-        payload = call_args[1]['json']
-        self.assertEqual(payload['model'], "qwen3:30b")
-        self.assertIn('prompt', payload)
-        self.assertFalse(payload['stream'])
+        mock_generate.assert_called_once()
+        call_args = mock_generate.call_args
+        self.assertEqual(call_args[1]['model'], "qwen3:30b")
+        self.assertIn('prompt', call_args[1])
+        self.assertFalse(call_args[1]['stream'])
     
-    @patch('transcription.post_processing.requests.post')
-    def test_process_transcription_with_speaker_markers(self, mock_post):
+    @patch('ollama.Client.generate')
+    def test_process_transcription_with_speaker_markers(self, mock_generate):
         """Testa processamento com marcadores de interlocutores"""
         # Mock da resposta com marcadores de interlocutores
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_generate.return_value = {
             'response': 'Pessoa 1: Olá, tudo bem?\nPessoa 2: Sim, e você?'
         }
-        mock_post.return_value = mock_response
         
         corrected_text, processed_segments = self.llm_service.process_transcription(
             segments=self.sample_segments,
@@ -112,11 +103,11 @@ class TestLLMPostProcessingService(unittest.TestCase):
         self.assertIn('Pessoa', corrected_text)
         self.assertTrue(any(seg.speaker_id is not None for seg in processed_segments))
     
-    @patch('transcription.post_processing.requests.post')
-    def test_process_transcription_api_error(self, mock_post):
+    @patch('ollama.Client.generate')
+    def test_process_transcription_api_error(self, mock_generate):
         """Testa tratamento de erro na API"""
         # Mock de erro na API
-        mock_post.side_effect = Exception("Connection error")
+        mock_generate.side_effect = Exception("Connection error")
         
         corrected_text, processed_segments = self.llm_service.process_transcription(
             segments=self.sample_segments,
@@ -191,10 +182,10 @@ class TestLLMPostProcessingService(unittest.TestCase):
         self.assertEqual(corrected_text, "")
         self.assertEqual(len(processed_segments), 0)
     
-    @patch('transcription.post_processing.requests.post')
-    def test_process_transcription_timeout(self, mock_post):
+    @patch('ollama.Client.generate')
+    def test_process_transcription_timeout(self, mock_generate):
         """Testa tratamento de timeout"""
-        mock_post.side_effect = TimeoutError("Request timeout")
+        mock_generate.side_effect = TimeoutError("Request timeout")
         
         corrected_text, processed_segments = self.llm_service.process_transcription(
             segments=self.sample_segments,
@@ -212,16 +203,13 @@ class TestLLMPostProcessingService(unittest.TestCase):
 class TestLLMIntegration(unittest.TestCase):
     """Testes de integração do LLM com outros componentes"""
     
-    @patch('transcription.post_processing.requests.post')
-    def test_full_pipeline_with_llm(self, mock_post):
+    @patch('ollama.Client.generate')
+    def test_full_pipeline_with_llm(self, mock_generate):
         """Testa pipeline completo com LLM"""
         # Mock da resposta
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_generate.return_value = {
             'response': 'Pessoa 1: Olá, tudo bem? Pessoa 2: Sim, estou bem.'
         }
-        mock_post.return_value = mock_response
         
         llm_service = LLMPostProcessingService(model_name="qwen3:30b")
         

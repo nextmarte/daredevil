@@ -156,4 +156,4 @@ SUPPORTED_AUDIO_FORMATS = [
 # LLM Configuration (Ollama)
 USE_LLM_POST_PROCESSING = os.getenv('USE_LLM_POST_PROCESSING', 'false').lower() == 'true'
 LLM_MODEL = os.getenv('LLM_MODEL', 'qwen3:30b')
-OLLAMA_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434/api/generate')
+OLLAMA_HOST = os.getenv('OLLAMA_HOST', None)  # None usa o padrão: http://localhost:11434

@@ -384,7 +384,7 @@ class TranscriptionService:
                         logger.info(f"Usando LLM ({settings.LLM_MODEL}) para pós-processamento...")
                         llm_service = LLMPostProcessingService(
                             model_name=settings.LLM_MODEL,
-                            ollama_url=settings.OLLAMA_URL
+                            ollama_host=settings.OLLAMA_HOST
                         )
                         
                         corrected_text, processed_segments = llm_service.process_transcription(

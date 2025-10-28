@@ -8,7 +8,7 @@ from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
 import language_tool_python
-import requests
+import ollama
 
 logger = logging.getLogger(__name__)
 
@@ -327,9 +327,16 @@ class LLMPostProcessingService:
     Pós-processamento de transcrições usando LLM via Ollama (qwen3:30b)
     Corrige gramática, pontuação e identifica interlocutores usando inteligência artificial
     """
-    def __init__(self, model_name: str = "qwen3:30b", ollama_url: str = "http://localhost:11434/api/generate"):
+    def __init__(self, model_name: str = "qwen3:30b", ollama_host: Optional[str] = None):
         self.model_name = model_name
-        self.ollama_url = ollama_url
+        self.ollama_host = ollama_host
+        
+        # Criar cliente Ollama
+        if ollama_host:
+            self.client = ollama.Client(host=ollama_host)
+        else:
+            self.client = ollama.Client()  # Usa localhost:11434 por padrão
+        
         logger.info(f"Inicializado LLMPostProcessingService com modelo {model_name}")
 
     def process_transcription(
@@ -367,22 +374,20 @@ class LLMPostProcessingService:
             
             logger.info(f"Enviando texto para LLM ({self.model_name})...")
             
-            # Fazer chamada ao Ollama
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
+            # Fazer chamada ao Ollama usando a biblioteca oficial
+            response = self.client.generate(
+                model=self.model_name,
+                prompt=prompt,
+                stream=False,
+                options={
                     "temperature": 0.3,  # Baixa temperatura para mais consistência
                     "top_p": 0.9,
                     "num_predict": 4096  # Máximo de tokens para resposta
                 }
-            }
+            )
             
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
-            response.raise_for_status()
-            result = response.json()
-            corrected_text = result.get("response", "").strip()
+            # Extrair texto da resposta
+            corrected_text = response.get("response", "").strip()
             
             logger.info("Texto processado pelo LLM com sucesso")
             
