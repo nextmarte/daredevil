@@ -19,7 +19,7 @@ from .schemas import (
     AudioInfo,
     TranscriptionResponse
 )
-from .post_processing import PostProcessingService
+from .post_processing import PostProcessingService, LLMPostProcessingService
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +295,8 @@ class TranscriptionService:
         post_process: bool = True,
         correct_grammar: bool = True,
         identify_speakers: bool = True,
-        clean_hesitations: bool = True
+        clean_hesitations: bool = True,
+        use_llm: bool = None
     ) -> TranscriptionResponse:
         """
         Processa arquivo de áudio completo
@@ -308,6 +309,7 @@ class TranscriptionService:
             correct_grammar: Se deve corrigir gramática (requer post_process=True)
             identify_speakers: Se deve identificar interlocutores (requer post_process=True)
             clean_hesitations: Se deve remover hesitações (requer post_process=True)
+            use_llm: Se deve usar LLM (Qwen3:30b) para pós-processamento (None = usar config do settings)
 
         Returns:
             TranscriptionResponse: Resposta completa da transcrição
@@ -373,13 +375,34 @@ class TranscriptionService:
                         for seg in transcription.segments
                     ]
                     
-                    # Processar transcrição
-                    corrected_text, processed_segments = PostProcessingService.process_transcription(
-                        segments=segments_dict,
-                        correct_grammar=correct_grammar,
-                        identify_speakers=identify_speakers,
-                        clean_hesitations=clean_hesitations
-                    )
+                    # Determinar se deve usar LLM
+                    if use_llm is None:
+                        use_llm = settings.USE_LLM_POST_PROCESSING
+                    
+                    if use_llm:
+                        # Usar LLM para pós-processamento
+                        logger.info(f"Usando LLM ({settings.LLM_MODEL}) para pós-processamento...")
+                        llm_service = LLMPostProcessingService(
+                            model_name=settings.LLM_MODEL,
+                            ollama_url=settings.OLLAMA_URL
+                        )
+                        
+                        corrected_text, processed_segments = llm_service.process_transcription(
+                            segments=segments_dict,
+                            raw_text=transcription.text,
+                            identify_speakers=identify_speakers,
+                            correct_grammar=correct_grammar,
+                            clean_hesitations=clean_hesitations
+                        )
+                    else:
+                        # Usar processamento tradicional
+                        logger.info("Usando pós-processamento tradicional...")
+                        corrected_text, processed_segments = PostProcessingService.process_transcription(
+                            segments=segments_dict,
+                            correct_grammar=correct_grammar,
+                            identify_speakers=identify_speakers,
+                            clean_hesitations=clean_hesitations
+                        )
                     
                     # Formatar conversa
                     formatted_conversation = PostProcessingService.format_conversation(processed_segments)
@@ -397,7 +420,7 @@ class TranscriptionService:
                             seg.text = proc_seg.corrected_text
                             seg.speaker_id = proc_seg.speaker_id
                     
-                    logger.info("Pós-processamento concluído")
+                    logger.info(f"Pós-processamento concluído (LLM: {use_llm})")
                     
                 except Exception as e:
                     logger.warning(f"Erro no pós-processamento: {e}. Usando transcrição original.", exc_info=True)
