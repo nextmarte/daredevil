@@ -15,12 +15,13 @@ Este documento resume as melhorias implementadas no sistema Daredevil para trans
 
 ### 1. Correção Gramatical e de Pontuação
 - **Biblioteca:** language-tool-python
-- **Idioma:** Português (pt-BR/pt)
+- **Idioma:** Português (pt-BR/pt) - **NOTA:** Pós-processamento só é aplicado automaticamente para português
 - **Características:**
   - Correção automática de erros gramaticais
   - Ajuste de capitalização
   - Melhoria de pontuação
   - Fallback gracioso caso o LanguageTool não esteja disponível
+- **Para outros idiomas:** O pós-processamento pode ser habilitado manualmente, mas a correção gramatical foi otimizada para português
 
 **Localização:** `transcription/post_processing.py` - Classe `GrammarCorrector`
 
@@ -120,12 +121,18 @@ Os mesmos parâmetros foram adicionados ao endpoint de processamento em lote.
 
 ## 📦 Dependências Adicionadas
 
+A dependência principal adicionada ao `pyproject.toml`:
+
 ```toml
-[project.dependencies]
-language-tool-python = "^2.9.4"
-psutil = "^7.1.2"           # Dependência do language-tool
-toml = "^0.10.2"            # Dependência do language-tool
+dependencies = [
+    # ... dependências existentes ...
+    "language-tool-python>=2.9.4",
+]
 ```
+
+**Dependências transitivas** (instaladas automaticamente):
+- `psutil>=7.1.2` - Para gerenciamento de processos do LanguageTool
+- `toml>=0.10.2` - Para configuração do LanguageTool
 
 ## 🎬 Demonstração
 
@@ -157,8 +164,9 @@ uv run python demo_post_processing.py
 ✅ **Mantida:** Todos os parâmetros de pós-processamento são opcionais e habilitados por padrão. O sistema continua funcionando normalmente sem modificações no código cliente.
 
 ### Comportamento Padrão
-- `post_process=true` por padrão (apenas para português)
-- Pode ser desabilitado passando `post_process=false`
+- `post_process=true` por padrão **apenas para português (pt, pt-BR)**
+- Para outros idiomas, o pós-processamento é desabilitado automaticamente
+- Pode ser desabilitado explicitamente passando `post_process=false`
 - Funcionalidades individuais podem ser controladas separadamente
 
 ## 🚀 Próximos Passos Sugeridos
