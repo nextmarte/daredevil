@@ -49,7 +49,7 @@ Foi implementada com sucesso a integração do modelo LLM **Qwen3:30b** via Olla
 
 - ✅ `USE_LLM_POST_PROCESSING` - Flag global (padrão: false)
 - ✅ `LLM_MODEL` - Modelo a ser usado (padrão: qwen3:30b)
-- ✅ `OLLAMA_URL` - URL do servidor Ollama
+- ✅ `OLLAMA_HOST` - Host do servidor Ollama (opcional, padrão: None usa localhost:11434)
 
 **Arquivo:** `.env.example`
 
@@ -227,7 +227,7 @@ Pessoa 1: Também estou legal. Vamos começar então.
 
 ### Funcionalidades
 - **Novos Parâmetros API:** 1 (use_llm)
-- **Novas Configurações:** 3 (USE_LLM_POST_PROCESSING, LLM_MODEL, OLLAMA_URL)
+- **Novas Configurações:** 3 (USE_LLM_POST_PROCESSING, LLM_MODEL, OLLAMA_HOST)
 - **Novos Métodos:** 4 (process_transcription, _build_prompt, _map_to_segments, _parse_speaker_segments)
 
 ## 🚀 Como Usar

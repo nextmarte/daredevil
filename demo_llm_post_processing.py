@@ -37,7 +37,7 @@ def example_basic_llm_processing():
     try:
         llm_service = LLMPostProcessingService(
             model_name="qwen3:30b",
-            ollama_url="http://localhost:11434/api/generate"
+            ollama_host=None  # Usa localhost:11434 por padrão
         )
         
         print("\nProcessando com LLM...")

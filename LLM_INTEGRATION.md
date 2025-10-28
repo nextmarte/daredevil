@@ -63,8 +63,8 @@ USE_LLM_POST_PROCESSING=true
 # Modelo LLM a ser usado
 LLM_MODEL=qwen3:30b
 
-# URL do servidor Ollama
-OLLAMA_URL=http://localhost:11434/api/generate
+# Host do servidor Ollama (opcional, padrão: http://localhost:11434)
+# OLLAMA_HOST=http://localhost:11434
 ```
 
 ### Configuração Alternativa
