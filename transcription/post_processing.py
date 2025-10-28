@@ -8,7 +8,14 @@ from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
 import language_tool_python
-import ollama
+
+try:
+    import ollama
+except ImportError:
+    raise ImportError(
+        "O módulo 'ollama' não está instalado. "
+        "Instale com: pip install ollama ou uv add ollama"
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -331,13 +338,21 @@ class LLMPostProcessingService:
         self.model_name = model_name
         self.ollama_host = ollama_host
         
-        # Criar cliente Ollama
-        if ollama_host:
-            self.client = ollama.Client(host=ollama_host)
-        else:
-            self.client = ollama.Client()  # Usa localhost:11434 por padrão
-        
-        logger.info(f"Inicializado LLMPostProcessingService com modelo {model_name}")
+        # Criar cliente Ollama com tratamento de erro
+        try:
+            if ollama_host:
+                self.client = ollama.Client(host=ollama_host)
+            else:
+                self.client = ollama.Client()  # Usa localhost:11434 por padrão
+            
+            logger.info(f"Inicializado LLMPostProcessingService com modelo {model_name}")
+        except Exception as e:
+            logger.error(f"Erro ao inicializar cliente Ollama: {e}")
+            raise RuntimeError(
+                f"Não foi possível conectar ao servidor Ollama. "
+                f"Certifique-se de que o Ollama está rodando. "
+                f"Execute: ollama serve"
+            ) from e
 
     def process_transcription(
         self,

@@ -78,10 +78,12 @@ class TestLLMPostProcessingService(unittest.TestCase):
         
         # Verificar que a chamada foi feita corretamente
         mock_generate.assert_called_once()
-        call_args = mock_generate.call_args
-        self.assertEqual(call_args[1]['model'], "qwen3:30b")
-        self.assertIn('prompt', call_args[1])
-        self.assertFalse(call_args[1]['stream'])
+        call_kwargs = mock_generate.call_args.kwargs
+        self.assertEqual(call_kwargs['model'], "qwen3:30b")
+        self.assertIn('prompt', call_kwargs)
+        self.assertFalse(call_kwargs['stream'])
+        self.assertIn('options', call_kwargs)
+        self.assertEqual(call_kwargs['options']['temperature'], 0.3)
     
     @patch('ollama.Client.generate')
     def test_process_transcription_with_speaker_markers(self, mock_generate):
