@@ -47,21 +47,12 @@ def health_check(request: HttpRequest):
         logger.error(f"Health check falhou: {e}")
         status = "unhealthy"
 
-    ffmpeg_available = shutil.which('ffmpeg') is not None
-    ffprobe_available = shutil.which('ffprobe') is not None
-
     return HealthResponse(
         status=status,
         whisper_model=settings.WHISPER_MODEL,
         supported_formats=settings.SUPPORTED_AUDIO_FORMATS,
         max_file_size_mb=settings.MAX_AUDIO_SIZE_MB,
-        temp_dir=settings.TEMP_AUDIO_DIR,
-        dependencies={
-            "ffmpeg": ffmpeg_available,
-            "ffprobe": ffprobe_available,
-        },
-    model_loaded=WhisperTranscriber._model is not None,
-        version="1.0.0"
+        temp_dir=settings.TEMP_AUDIO_DIR
     )
 
 
@@ -69,7 +60,11 @@ def health_check(request: HttpRequest):
 def transcribe_audio(
     request: HttpRequest,
     file: UploadedFile = File(...),
-    language: str = Form("pt")
+    language: str = Form("pt"),
+    post_process: bool = Form(True),
+    correct_grammar: bool = Form(True),
+    identify_speakers: bool = Form(True),
+    clean_hesitations: bool = Form(True)
 ):
     """
     Transcreve um arquivo de áudio
@@ -78,9 +73,15 @@ def transcribe_audio(
     - **file**: Arquivo de áudio (formatos suportados: opus, ogg, m4a, aac, mp4, mp3, wav, flac, webm)
     - **language**: Código do idioma (padrão: pt)
     - **model**: Modelo Whisper a usar (tiny, base, small, medium, large) - opcional
+    - **post_process**: Aplicar pós-processamento (padrão: true)
+    - **correct_grammar**: Corrigir gramática e pontuação (padrão: true)
+    - **identify_speakers**: Identificar interlocutores (padrão: true)
+    - **clean_hesitations**: Remover hesitações (padrão: true)
 
     ### Retorna:
     - Transcrição completa com timestamps
+    - Texto corrigido (se post_process=true)
+    - Identificação de interlocutores (se identify_speakers=true)
     - Informações sobre o áudio processado
     - Tempo de processamento
 
@@ -136,7 +137,11 @@ def transcribe_audio(
         result = TranscriptionService.process_audio_file(
             file_path=temp_file_path,
             language=language,
-            model=model
+            model=model,
+            post_process=post_process,
+            correct_grammar=correct_grammar,
+            identify_speakers=identify_speakers,
+            clean_hesitations=clean_hesitations
         )
 
         return result
@@ -165,7 +170,11 @@ def transcribe_audio(
 def transcribe_batch(
     request: HttpRequest,
     files: List[UploadedFile] = File(...),
-    language: str = Form("pt")
+    language: str = Form("pt"),
+    post_process: bool = Form(True),
+    correct_grammar: bool = Form(True),
+    identify_speakers: bool = Form(True),
+    clean_hesitations: bool = Form(True)
 ):
     """
     Transcreve múltiplos arquivos de áudio em lote
@@ -174,6 +183,10 @@ def transcribe_batch(
     - **files**: Lista de arquivos de áudio
     - **language**: Código do idioma (padrão: pt)
     - **model**: Modelo Whisper a usar - opcional
+    - **post_process**: Aplicar pós-processamento (padrão: true)
+    - **correct_grammar**: Corrigir gramática e pontuação (padrão: true)
+    - **identify_speakers**: Identificar interlocutores (padrão: true)
+    - **clean_hesitations**: Remover hesitações (padrão: true)
 
     ### Retorna:
     - Lista de resultados para cada arquivo
@@ -214,7 +227,11 @@ def transcribe_batch(
             result = TranscriptionService.process_audio_file(
                 file_path=temp_file_path,
                 language=language,
-                model=model
+                model=model,
+                post_process=post_process,
+                correct_grammar=correct_grammar,
+                identify_speakers=identify_speakers,
+                clean_hesitations=clean_hesitations
             )
 
             results.append(result)

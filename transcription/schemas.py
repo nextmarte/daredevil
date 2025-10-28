@@ -11,6 +11,8 @@ class TranscriptionSegment(BaseModel):
     end: float = Field(..., description="Tempo de fim em segundos")
     text: str = Field(..., description="Texto transcrito do segmento")
     confidence: Optional[float] = Field(None, description="Confiança da transcrição (0-1)")
+    original_text: Optional[str] = Field(None, description="Texto original antes da correção")
+    speaker_id: Optional[str] = Field(None, description="ID do interlocutor identificado")
 
 
 class AudioInfo(BaseModel):
@@ -31,6 +33,8 @@ class TranscriptionResult(BaseModel):
     )
     language: str = Field(..., description="Idioma detectado ou configurado")
     duration: float = Field(..., description="Duração total do áudio em segundos")
+    formatted_conversation: Optional[str] = Field(None, description="Conversa formatada com identificação de interlocutores")
+    post_processed: bool = Field(default=False, description="Indica se o texto foi pós-processado")
 
 
 class TranscriptionResponse(BaseModel):

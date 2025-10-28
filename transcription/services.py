@@ -19,6 +19,7 @@ from .schemas import (
     AudioInfo,
     TranscriptionResponse
 )
+from .post_processing import PostProcessingService
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,11 @@ class TranscriptionService:
     def process_audio_file(
         file_path: str,
         language: str = "pt",
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        post_process: bool = True,
+        correct_grammar: bool = True,
+        identify_speakers: bool = True,
+        clean_hesitations: bool = True
     ) -> TranscriptionResponse:
         """
         Processa arquivo de áudio completo
@@ -299,6 +304,10 @@ class TranscriptionService:
             file_path: Caminho do arquivo de áudio
             language: Idioma para transcrição
             model: Modelo Whisper a usar
+            post_process: Se deve aplicar pós-processamento
+            correct_grammar: Se deve corrigir gramática (requer post_process=True)
+            identify_speakers: Se deve identificar interlocutores (requer post_process=True)
+            clean_hesitations: Se deve remover hesitações (requer post_process=True)
 
         Returns:
             TranscriptionResponse: Resposta completa da transcrição
@@ -347,6 +356,52 @@ class TranscriptionService:
                 language=language,
                 model_name=model
             )
+            
+            # Aplicar pós-processamento se habilitado
+            if post_process and language in ['pt', 'pt-BR']:
+                try:
+                    logger.info("Aplicando pós-processamento...")
+                    
+                    # Preparar segmentos para pós-processamento
+                    segments_dict = [
+                        {
+                            'start': seg.start,
+                            'end': seg.end,
+                            'text': seg.text,
+                            'confidence': seg.confidence
+                        }
+                        for seg in transcription.segments
+                    ]
+                    
+                    # Processar transcrição
+                    corrected_text, processed_segments = PostProcessingService.process_transcription(
+                        segments=segments_dict,
+                        correct_grammar=correct_grammar,
+                        identify_speakers=identify_speakers,
+                        clean_hesitations=clean_hesitations
+                    )
+                    
+                    # Formatar conversa
+                    formatted_conversation = PostProcessingService.format_conversation(processed_segments)
+                    
+                    # Atualizar transcrição com resultados processados
+                    transcription.text = corrected_text
+                    transcription.formatted_conversation = formatted_conversation
+                    transcription.post_processed = True
+                    
+                    # Atualizar segmentos com informações de correção e interlocutor
+                    for i, seg in enumerate(transcription.segments):
+                        if i < len(processed_segments):
+                            proc_seg = processed_segments[i]
+                            seg.original_text = proc_seg.original_text
+                            seg.text = proc_seg.corrected_text
+                            seg.speaker_id = proc_seg.speaker_id
+                    
+                    logger.info("Pós-processamento concluído")
+                    
+                except Exception as e:
+                    logger.warning(f"Erro no pós-processamento: {e}. Usando transcrição original.", exc_info=True)
+                    # Continuar com transcrição original se houver erro
 
             processing_time = time.time() - start_time
 
