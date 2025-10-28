@@ -8,6 +8,7 @@ from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
 import language_tool_python
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -319,3 +320,50 @@ class PostProcessingService:
             formatted_lines.append(f"{current_speaker}: {' '.join(current_text)}")
         
         return '\n'.join(formatted_lines)
+
+
+class LLMPostProcessingService:
+    """
+    Pós-processamento de transcrições usando LLM via Ollama
+    """
+    def __init__(self, model_name: str = "qwen2.5:3b", ollama_url: str = "http://localhost:11434/api/generate"):
+        self.model_name = model_name
+        self.ollama_url = ollama_url
+
+    def process(self, segments: list, raw_text: str) -> dict:
+        """
+        Corrige texto e tenta identificar interlocutores usando LLM
+        Args:
+            segments: lista de segmentos da transcrição
+            raw_text: texto bruto da transcrição
+        Returns:
+            dict com texto corrigido e, se possível, interlocutores
+        """
+        prompt = (
+            "Você é um assistente de transcrição. Recebe um texto transcrito de áudio em português, "
+            "corrija erros de português, pontuação e gramática. Tente identificar e separar interlocutores "
+            "(ex: 'Pessoa 1:', 'Pessoa 2:') se possível, usando o contexto. Retorne o texto corrigido e organizado.\n\n"
+            f"Texto original:\n{raw_text}\n"
+        )
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": False
+        }
+        try:
+            response = requests.post(self.ollama_url, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            corrected_text = result.get("response", "")
+            return {
+                "corrected_text": corrected_text,
+                "raw_text": raw_text
+            }
+        except Exception as e:
+            import logging
+            logging.error(f"Erro no pós-processamento LLM: {e}")
+            return {
+                "corrected_text": raw_text,
+                "raw_text": raw_text,
+                "error": str(e)
+            }
