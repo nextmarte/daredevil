@@ -64,7 +64,8 @@ def transcribe_audio(
     post_process: bool = Form(True),
     correct_grammar: bool = Form(True),
     identify_speakers: bool = Form(True),
-    clean_hesitations: bool = Form(True)
+    clean_hesitations: bool = Form(True),
+    use_llm: bool = Form(None)
 ):
     """
     Transcreve um arquivo de áudio
@@ -77,6 +78,7 @@ def transcribe_audio(
     - **correct_grammar**: Corrigir gramática e pontuação (padrão: true)
     - **identify_speakers**: Identificar interlocutores (padrão: true)
     - **clean_hesitations**: Remover hesitações (padrão: true)
+    - **use_llm**: Usar LLM (Qwen3:30b) para pós-processamento avançado (padrão: None = usar config)
 
     ### Retorna:
     - Transcrição completa com timestamps
@@ -89,6 +91,10 @@ def transcribe_audio(
     - Áudio do WhatsApp: .opus, .ogg
     - Áudio do Instagram: .mp4, .m4a
     - Áudio padrão: .mp3, .wav
+    
+    ### LLM Post-Processing:
+    - Quando use_llm=true, utiliza o modelo Qwen3:30b via Ollama para correção avançada
+    - Requer Ollama rodando localmente (http://localhost:11434)
     """
     start_time = time.time()
     temp_file_path = None
@@ -141,7 +147,8 @@ def transcribe_audio(
             post_process=post_process,
             correct_grammar=correct_grammar,
             identify_speakers=identify_speakers,
-            clean_hesitations=clean_hesitations
+            clean_hesitations=clean_hesitations,
+            use_llm=use_llm
         )
 
         return result
@@ -174,7 +181,8 @@ def transcribe_batch(
     post_process: bool = Form(True),
     correct_grammar: bool = Form(True),
     identify_speakers: bool = Form(True),
-    clean_hesitations: bool = Form(True)
+    clean_hesitations: bool = Form(True),
+    use_llm: bool = Form(None)
 ):
     """
     Transcreve múltiplos arquivos de áudio em lote
@@ -187,6 +195,7 @@ def transcribe_batch(
     - **correct_grammar**: Corrigir gramática e pontuação (padrão: true)
     - **identify_speakers**: Identificar interlocutores (padrão: true)
     - **clean_hesitations**: Remover hesitações (padrão: true)
+    - **use_llm**: Usar LLM (Qwen3:30b) para pós-processamento avançado (padrão: None = usar config)
 
     ### Retorna:
     - Lista de resultados para cada arquivo
@@ -231,7 +240,8 @@ def transcribe_batch(
                 post_process=post_process,
                 correct_grammar=correct_grammar,
                 identify_speakers=identify_speakers,
-                clean_hesitations=clean_hesitations
+                clean_hesitations=clean_hesitations,
+                use_llm=use_llm
             )
 
             results.append(result)

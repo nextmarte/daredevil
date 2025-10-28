@@ -8,6 +8,7 @@ from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
 import language_tool_python
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -319,3 +320,235 @@ class PostProcessingService:
             formatted_lines.append(f"{current_speaker}: {' '.join(current_text)}")
         
         return '\n'.join(formatted_lines)
+
+
+class LLMPostProcessingService:
+    """
+    Pós-processamento de transcrições usando LLM via Ollama (qwen3:30b)
+    Corrige gramática, pontuação e identifica interlocutores usando inteligência artificial
+    """
+    def __init__(self, model_name: str = "qwen3:30b", ollama_url: str = "http://localhost:11434/api/generate"):
+        self.model_name = model_name
+        self.ollama_url = ollama_url
+        logger.info(f"Inicializado LLMPostProcessingService com modelo {model_name}")
+
+    def process_transcription(
+        self,
+        segments: List[Dict],
+        raw_text: str,
+        identify_speakers: bool = True,
+        correct_grammar: bool = True,
+        clean_hesitations: bool = True
+    ) -> Tuple[str, List[ProcessedSegment]]:
+        """
+        Processa transcrição completa usando LLM
+        
+        Args:
+            segments: Lista de segmentos da transcrição
+            raw_text: Texto bruto da transcrição
+            identify_speakers: Se deve identificar interlocutores
+            correct_grammar: Se deve corrigir gramática
+            clean_hesitations: Se deve remover hesitações
+        
+        Returns:
+            Tuple[str, List[ProcessedSegment]]: Texto corrigido e segmentos processados
+        """
+        if not segments:
+            return "", []
+        
+        try:
+            # Construir prompt baseado nas opções
+            prompt = self._build_prompt(
+                raw_text=raw_text,
+                identify_speakers=identify_speakers,
+                correct_grammar=correct_grammar,
+                clean_hesitations=clean_hesitations
+            )
+            
+            logger.info(f"Enviando texto para LLM ({self.model_name})...")
+            
+            # Fazer chamada ao Ollama
+            payload = {
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,  # Baixa temperatura para mais consistência
+                    "top_p": 0.9,
+                    "num_predict": 4096  # Máximo de tokens para resposta
+                }
+            }
+            
+            response = requests.post(self.ollama_url, json=payload, timeout=120)
+            response.raise_for_status()
+            result = response.json()
+            corrected_text = result.get("response", "").strip()
+            
+            logger.info("Texto processado pelo LLM com sucesso")
+            
+            # Processar segmentos mantendo timestamps originais
+            processed_segments = self._map_to_segments(
+                segments=segments,
+                corrected_text=corrected_text,
+                identify_speakers=identify_speakers
+            )
+            
+            return corrected_text, processed_segments
+            
+        except Exception as e:
+            logger.error(f"Erro no pós-processamento LLM: {e}", exc_info=True)
+            # Fallback: retornar texto original
+            processed_segments = [
+                ProcessedSegment(
+                    start=seg.get('start', 0),
+                    end=seg.get('end', 0),
+                    original_text=seg.get('text', ''),
+                    corrected_text=seg.get('text', ''),
+                    speaker_id=None,
+                    confidence=seg.get('confidence')
+                )
+                for seg in segments
+            ]
+            return raw_text, processed_segments
+    
+    def _build_prompt(
+        self,
+        raw_text: str,
+        identify_speakers: bool,
+        correct_grammar: bool,
+        clean_hesitations: bool
+    ) -> str:
+        """Constrói prompt para o LLM baseado nas opções"""
+        instructions = []
+        
+        instructions.append(
+            "Você é um especialista em transcrição e correção de textos em português brasileiro."
+        )
+        
+        if correct_grammar:
+            instructions.append(
+                "Corrija todos os erros de gramática, ortografia e pontuação."
+            )
+        
+        if clean_hesitations:
+            instructions.append(
+                "Remova hesitações comuns da fala como 'é', 'ah', 'er', 'uhm', 'hmm', 'né'."
+            )
+        
+        if identify_speakers:
+            instructions.append(
+                "Identifique e separe os diferentes interlocutores da conversa. "
+                "Use marcadores como 'Pessoa 1:', 'Pessoa 2:', etc. para cada falante. "
+                "Analise o contexto, pausas e mudanças de assunto para identificar quando há troca de interlocutor."
+            )
+        
+        instructions.append(
+            "Mantenha o significado original do texto. "
+            "Retorne APENAS o texto corrigido e organizado, sem explicações adicionais."
+        )
+        
+        prompt = "\n".join(instructions)
+        prompt += f"\n\nTexto para processar:\n{raw_text}\n\nTexto corrigido:"
+        
+        return prompt
+    
+    def _map_to_segments(
+        self,
+        segments: List[Dict],
+        corrected_text: str,
+        identify_speakers: bool
+    ) -> List[ProcessedSegment]:
+        """
+        Mapeia texto corrigido de volta aos segmentos originais mantendo timestamps
+        """
+        processed_segments = []
+        
+        # Se houver identificação de interlocutores no texto corrigido
+        if identify_speakers and any(marker in corrected_text for marker in ['Pessoa 1:', 'Pessoa 2:', 'Speaker', 'Interlocutor']):
+            # Tentar extrair segmentos por interlocutor
+            processed_segments = self._parse_speaker_segments(segments, corrected_text)
+        else:
+            # Mapear segmentos simples mantendo ordem
+            lines = [line.strip() for line in corrected_text.split('\n') if line.strip()]
+            
+            for i, seg in enumerate(segments):
+                # Tentar encontrar texto correspondente
+                corrected_seg_text = lines[i] if i < len(lines) else seg.get('text', '')
+                
+                processed_segments.append(ProcessedSegment(
+                    start=seg.get('start', 0),
+                    end=seg.get('end', 0),
+                    original_text=seg.get('text', ''),
+                    corrected_text=corrected_seg_text,
+                    speaker_id=None,
+                    confidence=seg.get('confidence')
+                ))
+        
+        return processed_segments
+    
+    def _parse_speaker_segments(
+        self,
+        segments: List[Dict],
+        corrected_text: str
+    ) -> List[ProcessedSegment]:
+        """
+        Parseia texto com marcadores de interlocutores
+        """
+        import re
+        
+        # Padrões para identificar marcadores de interlocutor
+        speaker_patterns = [
+            r'(Pessoa \d+):\s*',
+            r'(Interlocutor \d+):\s*',
+            r'(Speaker [A-Z]):\s*',
+            r'(Falante \d+):\s*'
+        ]
+        
+        processed_segments = []
+        current_speaker = None
+        segment_idx = 0
+        
+        # Dividir texto por linhas
+        lines = corrected_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Verificar se linha tem marcador de interlocutor
+            speaker_found = False
+            for pattern in speaker_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    current_speaker = match.group(1)
+                    line = re.sub(pattern, '', line).strip()
+                    speaker_found = True
+                    break
+            
+            if line and segment_idx < len(segments):
+                seg = segments[segment_idx]
+                processed_segments.append(ProcessedSegment(
+                    start=seg.get('start', 0),
+                    end=seg.get('end', 0),
+                    original_text=seg.get('text', ''),
+                    corrected_text=line,
+                    speaker_id=current_speaker,
+                    confidence=seg.get('confidence')
+                ))
+                segment_idx += 1
+        
+        # Adicionar segmentos restantes se houver
+        while segment_idx < len(segments):
+            seg = segments[segment_idx]
+            processed_segments.append(ProcessedSegment(
+                start=seg.get('start', 0),
+                end=seg.get('end', 0),
+                original_text=seg.get('text', ''),
+                corrected_text=seg.get('text', ''),
+                speaker_id=current_speaker,
+                confidence=seg.get('confidence')
+            ))
+            segment_idx += 1
+        
+        return processed_segments

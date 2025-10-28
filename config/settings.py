@@ -152,3 +152,8 @@ SUPPORTED_AUDIO_FORMATS = [
     'opus', 'ogg', 'm4a', 'aac',  # WhatsApp/Instagram
     'mp4', 'mp3', 'wav', 'flac', 'webm'  # Standard formats
 ]
+
+# LLM Configuration (Ollama)
+USE_LLM_POST_PROCESSING = os.getenv('USE_LLM_POST_PROCESSING', 'false').lower() == 'true'
+LLM_MODEL = os.getenv('LLM_MODEL', 'qwen3:30b')
+OLLAMA_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434/api/generate')

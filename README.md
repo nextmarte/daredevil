@@ -6,9 +6,10 @@ API de transcrição de áudio em português usando Django Ninja e Whisper (Open
 
 - ✅ Transcrição de alta qualidade usando Whisper
 - ✅ Otimizado para português brasileiro
-- ✅ **NOVO: Correção automática de gramática e pontuação**
-- ✅ **NOVO: Identificação de interlocutores em conversas**
-- ✅ **NOVO: Remoção de hesitações (é, ah, er, uhm)**
+- ✅ **NOVO: Pós-processamento com LLM (Qwen3:30b via Ollama)** 🤖
+- ✅ **Correção automática de gramática e pontuação**
+- ✅ **Identificação inteligente de interlocutores em conversas**
+- ✅ **Remoção de hesitações (é, ah, er, uhm)**
 - ✅ Suporte a múltiplos formatos: WhatsApp (.opus, .ogg), Instagram (.mp4, .m4a), e formatos padrão (.mp3, .wav, .flac)
 - ✅ Transcrição com timestamps detalhados
 - ✅ Processamento em lote
@@ -96,12 +97,21 @@ POST /api/transcribe
 - `correct_grammar`: Corrigir gramática e pontuação (padrão: true)
 - `identify_speakers`: Identificar interlocutores (padrão: true)
 - `clean_hesitations`: Remover hesitações (padrão: true)
+- `use_llm`: Usar LLM (Qwen3:30b) para pós-processamento avançado (padrão: None = usar configuração)
 
 **Exemplo com curl (básico):**
 ```bash
 curl -X POST "http://localhost:8000/api/transcribe" \
   -F "file=@audio.mp3" \
   -F "language=pt"
+```
+
+**Exemplo com curl (usando LLM):**
+```bash
+curl -X POST "http://localhost:8000/api/transcribe" \
+  -F "file=@audio.mp3" \
+  -F "language=pt" \
+  -F "use_llm=true"
 ```
 
 **Exemplo com curl (com pós-processamento desabilitado):**
@@ -175,7 +185,13 @@ Lista todos os formatos de áudio suportados.
 
 ## 🧠 Pós-Processamento Inteligente
 
-### Correção de Gramática e Pontuação
+O Daredevil oferece dois modos de pós-processamento:
+
+### 1. Pós-Processamento Tradicional (Padrão)
+
+Baseado em regras e bibliotecas especializadas:
+
+#### Correção de Gramática e Pontuação
 
 O sistema utiliza **LanguageTool** para corrigir erros gramaticais e de pontuação em português:
 
@@ -190,9 +206,9 @@ Entrada:  "ola como vai voce"
 Saída:    "Olá, como vai você?"
 ```
 
-### Identificação de Interlocutores
+#### Identificação de Interlocutores
 
-Algoritmo inteligente que identifica diferentes pessoas falando baseado em:
+Algoritmo baseado em heurísticas que identifica diferentes pessoas falando baseado em:
 
 - **Pausas longas** (> 1 segundo entre segmentos)
 - **Padrões de conversa** (perguntas e respostas)
@@ -205,7 +221,7 @@ Speaker_B: Sim, estou bem. E você?
 Speaker_A: Também estou bem, obrigado.
 ```
 
-### Remoção de Hesitações
+#### Remoção de Hesitações
 
 Remove automaticamente hesitações comuns em português:
 
@@ -218,12 +234,67 @@ Entrada:  "Olá, é, eu queria ah falar sobre er o projeto"
 Saída:    "Olá, eu queria falar sobre o projeto"
 ```
 
-### Demonstração
+### 2. Pós-Processamento com LLM (Qwen3:30b) 🤖
 
-Execute o script de demonstração para ver todos os recursos:
+**NOVO!** Processamento avançado usando inteligência artificial para resultados superiores.
+
+#### Vantagens do LLM:
+
+- ✅ **Compreensão contextual profunda** - entende o significado real da fala
+- ✅ **Correção avançada** - corrige gírias, contrações, erros complexos
+- ✅ **Identificação inteligente** - detecta interlocutores por contexto semântico
+- ✅ **Qualidade superior** - resultados naturais e profissionais
+- ✅ **100% local** - processamento offline via Ollama
+
+#### Instalação Rápida:
 
 ```bash
+# 1. Instalar Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# 2. Baixar modelo Qwen3:30b (~17GB)
+ollama pull qwen3:30b
+
+# 3. Iniciar servidor
+ollama serve
+```
+
+#### Uso via API:
+
+```bash
+curl -X POST "http://localhost:8000/api/transcribe" \
+  -F "file=@audio.mp3" \
+  -F "use_llm=true"
+```
+
+#### Exemplo de Transformação:
+
+**Antes (transcrição bruta):**
+```
+ola tudo bem com vc ah sim to bem e vc tambem to legal vamos comecar entao
+```
+
+**Depois (LLM):**
+```
+Pessoa 1: Olá, tudo bem com você?
+Pessoa 2: Sim, estou bem. E você?
+Pessoa 1: Também estou legal. Vamos começar então.
+```
+
+#### Documentação Completa:
+
+Para detalhes completos sobre o LLM, veja: **[LLM_INTEGRATION.md](LLM_INTEGRATION.md)**
+
+### Demonstração
+
+Execute os scripts de demonstração:
+
+```bash
+# Pós-processamento tradicional
 uv run python demo_post_processing.py
+
+# Pós-processamento com LLM
+uv run python demo_llm_post_processing.py
 ```
 
 ## 📁 Formatos Suportados
