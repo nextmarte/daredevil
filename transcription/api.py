@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional
 from pathlib import Path
 
+import torch
 from ninja import NinjaAPI, File, Form
 from ninja.files import UploadedFile
 from django.conf import settings
@@ -49,10 +50,51 @@ def health_check(request: HttpRequest):
     return HealthResponse(
         status=status,
         whisper_model=settings.WHISPER_MODEL,
-        supported_formats=settings.SUPPORTED_AUDIO_FORMATS,
+        supported_formats=settings.ALL_SUPPORTED_FORMATS,
         max_file_size_mb=settings.MAX_AUDIO_SIZE_MB,
         temp_dir=settings.TEMP_AUDIO_DIR
     )
+
+
+@api.get("/gpu-status", tags=["Health"])
+def gpu_status(request: HttpRequest):
+    """
+    Verifica o status da GPU e uso de memória
+    
+    Retorna informações sobre GPUs disponíveis e uso atual de memória.
+    """
+    device = WhisperTranscriber.get_device()
+    
+    if device == "cpu":
+        return {
+            "gpu_available": False,
+            "device": "cpu",
+            "message": "Nenhuma GPU disponível. Usando CPU para processamento."
+        }
+    
+    gpu_info = {
+        "gpu_available": True,
+        "device": device,
+        "gpu_count": torch.cuda.device_count(),
+        "gpus": []
+    }
+    
+    for i in range(torch.cuda.device_count()):
+        memory_allocated = torch.cuda.memory_allocated(i) / (1024**3)
+        memory_reserved = torch.cuda.memory_reserved(i) / (1024**3)
+        memory_total = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+        
+        gpu_info["gpus"].append({
+            "id": i,
+            "name": torch.cuda.get_device_name(i),
+            "memory_allocated_gb": round(memory_allocated, 2),
+            "memory_reserved_gb": round(memory_reserved, 2),
+            "memory_total_gb": round(memory_total, 2),
+            "memory_free_gb": round(memory_total - memory_reserved, 2),
+            "compute_capability": f"{torch.cuda.get_device_capability(i)[0]}.{torch.cuda.get_device_capability(i)[1]}"
+        })
+    
+    return gpu_info
 
 
 @api.post("/transcribe", response=TranscriptionResponse, tags=["Transcription"])
@@ -62,22 +104,50 @@ def transcribe_audio(
     language: str = Form("pt")
 ):
     """
-    Transcreve um arquivo de áudio
+    Transcreve um arquivo de áudio ou vídeo
 
     ### Parâmetros:
-    - **file**: Arquivo de áudio (formatos suportados: opus, ogg, m4a, aac, mp4, mp3, wav, flac, webm)
-    - **language**: Código do idioma (padrão: pt)
+    - **file**: Arquivo de áudio ou vídeo (ver formatos suportados abaixo)
+    - **language**: Código do idioma (padrão: **pt** para português brasileiro)
     - **model**: Modelo Whisper a usar (tiny, base, small, medium, large) - opcional
+
+    ### Formatos de Áudio Suportados:
+    **WhatsApp**: .opus, .ogg  
+    **Instagram/Redes Sociais**: .mp4, .m4a, .aac  
+    **Padrão**: .mp3, .wav, .flac, .webm  
+
+    ### Formatos de Vídeo Suportados:
+    .mp4, .avi, .mov, .mkv, .flv, .wmv, .webm, .ogv, .ts, .mts, .m2ts, .3gp, .f4v, .asf  
+    **Nota**: O áudio será automaticamente extraído em qualidade otimizada para transcrição.
+
+    ### Linguagens Suportadas:
+    - **pt**: Português Brasileiro (padrão) ⭐
+    - en: Inglês
+    - es: Espanhol
+    - fr: Francês
+    - de: Alemão
+    - it: Italiano
+    - E outros idiomas suportados pelo Whisper
 
     ### Retorna:
     - Transcrição completa com timestamps
-    - Informações sobre o áudio processado
-    - Tempo de processamento
+    - Informações sobre o áudio/vídeo processado
+    - Tempo total de processamento
+
+    ### Otimizações para Português:
+    - Remove hesitações comuns (tipo, sabe, entendeu, né, etc.)
+    - Capitalização correta de frases
+    - Pontuação normalizada
+    - Abreviações expandidas
+
+    ### Limite de Tamanho:
+    Máximo 500MB por arquivo
 
     ### Exemplos de uso:
     - Áudio do WhatsApp: .opus, .ogg
-    - Áudio do Instagram: .mp4, .m4a
+    - Vídeo do Instagram: .mp4 (áudio extraído automaticamente)
     - Áudio padrão: .mp3, .wav
+    - Vídeo local: .mkv, .mov, .avi
     """
     start_time = time.time()
     temp_file_path = None
@@ -99,15 +169,17 @@ def transcribe_audio(
                 error=f"Arquivo muito grande: {file_size_mb:.2f}MB (máximo: {settings.MAX_AUDIO_SIZE_MB}MB)"
             )
 
-        # Validar extensão
+        # Validar extensão (áudio OU vídeo)
         file_extension = Path(file.name).suffix.lstrip('.').lower()
-        if file_extension not in settings.SUPPORTED_AUDIO_FORMATS:
+        supported_formats = settings.ALL_SUPPORTED_FORMATS
+        
+        if file_extension not in supported_formats:
             return TranscriptionResponse(
                 success=False,
                 transcription=None,
                 processing_time=time.time() - start_time,
                 audio_info=None,
-                error=f"Formato '{file_extension}' não suportado. Formatos aceitos: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}"
+                error=f"Formato '{file_extension}' não suportado. Formatos aceitos: {', '.join(sorted(supported_formats))}"
             )
 
         # Salvar arquivo temporário
@@ -122,10 +194,10 @@ def transcribe_audio(
 
         logger.info(f"Arquivo salvo: {temp_file_path} ({file_size_mb:.2f}MB)")
 
-        # Processar áudio
+        # Processar áudio (language padrão é português)
         result = TranscriptionService.process_audio_file(
             file_path=temp_file_path,
-            language=language,
+            language=language if language != "pt" else None,  # None usa o padrão
             model=model
         )
 
@@ -247,18 +319,21 @@ def transcribe_batch(
 
 
 # Endpoint adicional para listar formatos suportados
-@api.get("/formats", tags=["Info"])
+@api.get("/formats", tags=["Health"])
 def list_supported_formats(request: HttpRequest):
     """
-    Lista todos os formatos de áudio suportados
+    Lista todos os formatos suportados pela API
 
-    Retorna informações sobre os formatos aceitos pela API,
-    incluindo formatos específicos do WhatsApp e Instagram.
+    Retorna formatos de áudio e vídeo separados, além do limite máximo de arquivo.
     """
     return {
-        "supported_formats": settings.SUPPORTED_AUDIO_FORMATS,
+        "audio_formats": sorted(settings.SUPPORTED_AUDIO_FORMATS),
+        "video_formats": sorted(settings.SUPPORTED_VIDEO_FORMATS),
+        "all_formats": sorted(settings.ALL_SUPPORTED_FORMATS),
         "max_file_size_mb": settings.MAX_AUDIO_SIZE_MB,
-        "whatsapp_formats": ["opus", "ogg", "m4a", "aac"],
-        "instagram_formats": ["mp4", "m4a", "aac"],
-        "standard_formats": ["mp3", "wav", "flac", "webm"]
+        "notes": {
+            "video_conversion": "Arquivos de vídeo serão convertidos para áudio automaticamente",
+            "audio_optimization": "Áudio será normalizado para 16kHz, mono",
+            "portuguese_default": "Português Brasileiro é o idioma padrão e otimizado"
+        }
     }

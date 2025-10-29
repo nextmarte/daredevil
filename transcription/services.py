@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict
 
 import whisper
+import torch
 from pydub import AudioSegment
 from django.conf import settings
 
@@ -18,6 +19,8 @@ from .schemas import (
     AudioInfo,
     TranscriptionResponse
 )
+from .portuguese_processor import PortugueseBRTextProcessor
+from .video_processor import VideoProcessor, MediaTypeDetector
 
 logger = logging.getLogger(__name__)
 
@@ -156,11 +159,32 @@ class WhisperTranscriber:
 
     _model = None
     _current_model_name = None
+    _device = None
+
+    @classmethod
+    def get_device(cls) -> str:
+        """
+        Detecta e retorna o dispositivo disponível (cuda/cpu)
+        
+        Returns:
+            str: 'cuda' se GPU disponível, 'cpu' caso contrário
+        """
+        if cls._device is None:
+            cls._device = "cuda" if torch.cuda.is_available() else "cpu"
+            
+            if cls._device == "cuda":
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                logger.info(f"GPU detectada: {gpu_name} ({gpu_memory:.1f}GB VRAM)")
+            else:
+                logger.info("GPU não disponível, usando CPU")
+                
+        return cls._device
 
     @classmethod
     def load_model(cls, model_name: Optional[str] = None) -> whisper.Whisper:
         """
-        Carrega modelo Whisper (singleton)
+        Carrega modelo Whisper (singleton) no dispositivo apropriado
 
         Args:
             model_name: Nome do modelo (tiny, base, small, medium, large)
@@ -171,20 +195,27 @@ class WhisperTranscriber:
         if model_name is None:
             model_name = settings.WHISPER_MODEL
 
+        device = cls.get_device()
+
         # Reutilizar modelo se já estiver carregado
         if cls._model is not None and cls._current_model_name == model_name:
-            logger.info(f"Reutilizando modelo Whisper: {model_name}")
+            logger.info(f"Reutilizando modelo Whisper: {model_name} ({device})")
             return cls._model
 
-        logger.info(f"Carregando modelo Whisper: {model_name}")
+        logger.info(f"Carregando modelo Whisper: {model_name} no dispositivo: {device}")
         start_time = time.time()
 
         try:
-            cls._model = whisper.load_model(model_name)
+            cls._model = whisper.load_model(model_name, device=device)
             cls._current_model_name = model_name
 
             load_time = time.time() - start_time
             logger.info(f"Modelo carregado em {load_time:.2f}s")
+            
+            # Log de memória GPU se disponível
+            if device == "cuda":
+                memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                logger.info(f"Memória GPU alocada: {memory_allocated:.2f}GB")
 
             return cls._model
 
@@ -196,7 +227,7 @@ class WhisperTranscriber:
     def transcribe(
         cls,
         audio_path: str,
-        language: str = "pt",
+        language: str = None,
         model_name: Optional[str] = None
     ) -> TranscriptionResult:
         """
@@ -204,12 +235,16 @@ class WhisperTranscriber:
 
         Args:
             audio_path: Caminho do arquivo de áudio (WAV 16kHz)
-            language: Código do idioma
+            language: Código do idioma (padrão: português brasileiro)
             model_name: Nome do modelo Whisper (opcional)
 
         Returns:
             TranscriptionResult: Resultado da transcrição
         """
+        # Usar português como padrão
+        if language is None:
+            language = settings.WHISPER_LANGUAGE
+        
         model = cls.load_model(model_name)
 
         logger.info(f"Transcrevendo áudio: {audio_path} (idioma: {language})")
@@ -220,24 +255,36 @@ class WhisperTranscriber:
             result = model.transcribe(
                 audio_path,
                 language=language,
-                verbose=False
+                verbose=False,
+                fp16=torch.cuda.is_available()  # Usar FP16 em GPU para economizar memória
             )
 
             # Processar segmentos
             segments = []
             for seg in result.get('segments', []):
+                text = seg['text'].strip()
+                
+                # Aplicar pós-processamento de português se idioma é português
+                if language == 'pt':
+                    text = PortugueseBRTextProcessor.process(text)
+                
                 segments.append(TranscriptionSegment(
                     start=seg['start'],
                     end=seg['end'],
-                    text=seg['text'].strip(),
+                    text=text,
                     confidence=seg.get('no_speech_prob', None)
                 ))
+
+            # Processar texto completo
+            full_text = result['text'].strip()
+            if language == 'pt':
+                full_text = PortugueseBRTextProcessor.process(full_text)
 
             transcription_time = time.time() - start_time
             logger.info(f"Transcrição concluída em {transcription_time:.2f}s")
 
             return TranscriptionResult(
-                text=result['text'].strip(),
+                text=full_text,
                 segments=segments,
                 language=result.get('language', language),
                 duration=result.get('duration', 0)
@@ -261,57 +308,119 @@ class TranscriptionService:
     @staticmethod
     def process_audio_file(
         file_path: str,
-        language: str = "pt",
+        language: str = None,
         model: Optional[str] = None
     ) -> TranscriptionResponse:
         """
-        Processa arquivo de áudio completo
+        Processa arquivo de áudio ou vídeo completo
 
         Args:
-            file_path: Caminho do arquivo de áudio
-            language: Idioma para transcrição
+            file_path: Caminho do arquivo de áudio ou vídeo
+            language: Idioma para transcrição (padrão: português brasileiro)
             model: Modelo Whisper a usar
 
         Returns:
             TranscriptionResponse: Resposta completa da transcrição
         """
+        # Usar português como padrão
+        if language is None:
+            language = settings.WHISPER_LANGUAGE
+        
         start_time = time.time()
         temp_wav_path = None
+        extension = Path(file_path).suffix.lstrip('.').lower()
 
         try:
-            # Validar arquivo
-            is_valid, error_msg = AudioProcessor.validate_audio_file(file_path)
-            if not is_valid:
-                return TranscriptionResponse(
-                    success=False,
-                    transcription=None,
-                    processing_time=time.time() - start_time,
-                    audio_info=None,
-                    error=error_msg
-                )
-
-            # Obter informações do áudio original
-            audio_info = AudioProcessor.get_audio_info(file_path)
-
-            # Converter para WAV se necessário
-            extension = Path(file_path).suffix.lstrip('.').lower()
-            if extension != 'wav':
+            # Detectar se é vídeo
+            is_video = extension in settings.SUPPORTED_VIDEO_FORMATS
+            
+            if is_video:
+                logger.info(f"Arquivo de vídeo detectado: {extension}")
+                
+                # Validar vídeo
+                is_valid, error_msg = VideoProcessor.validate_video_file(file_path)
+                if not is_valid:
+                    return TranscriptionResponse(
+                        success=False,
+                        transcription=None,
+                        processing_time=time.time() - start_time,
+                        audio_info=None,
+                        error=error_msg or "Arquivo de vídeo inválido"
+                    )
+                
+                # Obter informações do vídeo
+                video_info = VideoProcessor.get_video_info(file_path)
+                logger.info(f"Informações do vídeo: {video_info}")
+                
+                # Extrair áudio do vídeo
                 temp_wav_path = os.path.join(
                     settings.TEMP_AUDIO_DIR,
-                    f"temp_{int(time.time())}_{os.getpid()}.wav"
+                    f"video_extract_{int(time.time())}_{os.getpid()}.wav"
                 )
-
-                if extension == 'mp4':
-                    # Extrair áudio de vídeo
-                    AudioProcessor.extract_audio_from_video(
-                        file_path, temp_wav_path)
-                else:
-                    # Converter formato de áudio
-                    AudioProcessor.convert_to_wav(file_path, temp_wav_path)
-
+                
+                success, result_msg = VideoProcessor.extract_audio(
+                    file_path,
+                    temp_wav_path,
+                    timeout=1800  # 30 minutos para vídeos grandes
+                )
+                
+                if not success:
+                    return TranscriptionResponse(
+                        success=False,
+                        transcription=None,
+                        processing_time=time.time() - start_time,
+                        audio_info=None,
+                        error=f"Erro ao extrair áudio: {result_msg}"
+                    )
+                
                 transcribe_path = temp_wav_path
+                
+                # Criar AudioInfo a partir do vídeo
+                video_duration = 0
+                if video_info and isinstance(video_info, dict):
+                    video_duration = video_info.get('duration', 0)
+                
+                audio_info = AudioInfo(
+                    format=extension,
+                    duration=float(video_duration),
+                    sample_rate=16000,
+                    channels=1,
+                    file_size_mb=os.path.getsize(file_path) / (1024 * 1024)
+                )
             else:
-                transcribe_path = file_path
+                # Arquivo de áudio padrão
+                # Validar arquivo
+                is_valid, error_msg = AudioProcessor.validate_audio_file(file_path)
+                if not is_valid:
+                    return TranscriptionResponse(
+                        success=False,
+                        transcription=None,
+                        processing_time=time.time() - start_time,
+                        audio_info=None,
+                        error=error_msg
+                    )
+
+                # Obter informações do áudio original
+                audio_info = AudioProcessor.get_audio_info(file_path)
+
+                # Converter para WAV se necessário
+                if extension != 'wav':
+                    temp_wav_path = os.path.join(
+                        settings.TEMP_AUDIO_DIR,
+                        f"temp_{int(time.time())}_{os.getpid()}.wav"
+                    )
+
+                    if extension == 'mp4':
+                        # Extrair áudio de vídeo (arquivo mp4 tratado como áudio)
+                        AudioProcessor.extract_audio_from_video(
+                            file_path, temp_wav_path)
+                    else:
+                        # Converter formato de áudio
+                        AudioProcessor.convert_to_wav(file_path, temp_wav_path)
+
+                    transcribe_path = temp_wav_path
+                else:
+                    transcribe_path = file_path
 
             # Transcrever
             transcription = WhisperTranscriber.transcribe(
