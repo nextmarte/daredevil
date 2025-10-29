@@ -1,12 +1,12 @@
 # 🐳 Docker Setup - Daredevil API
 
-API de transcrição rodando em container Docker na porta **8000**.
+API de transcrição rodando em container Docker na porta **8000** com suporte opcional a GPU NVIDIA.
 
 ## 🚀 Quick Start
 
 ### Opção 1: Build Local com UV (Recomendado)
 
-O build local usa `python:3.12-slim` (glibc) que é compatível com wheels de pacotes como `torch` e `openai-whisper`.
+O build local usa base NVIDIA CUDA que é compatível com GPU e pacotes como `torch` e `openai-whisper`.
 
 ```bash
 # Build da imagem
@@ -19,13 +19,16 @@ docker compose up -d
 docker compose logs -f web
 ```
 
-### Opção 2: Imagem UV do GitHub (Alpine)
+### Opção 2: Build com GPU NVIDIA (Para Aceleração)
 
-Usa a imagem oficial do UV, mas pode ter problemas com pacotes que precisam de wheels manylinux (como torch).
+Para usar GPU, você precisa ter o NVIDIA Container Toolkit instalado. Veja [GPU_SETUP.md](GPU_SETUP.md) para instruções completas.
 
 ```bash
-# Subir usando a imagem UV do GHCR
-UV_IMAGE=ghcr.io/astral-sh/uv:0.9.2-python3.14-alpine docker compose up -d
+# Build e subir com GPU
+docker compose up --build -d
+
+# Verificar se GPU está disponível
+docker exec daredevil_web python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
 # Ver logs
 docker compose logs -f web
@@ -99,14 +102,17 @@ docker compose logs web | grep -i error
 
 ## 🌐 Testando a API
 
-Após subir o container, a API estará disponível em `http://localhost:8000`
+Após subir o container, a API estará disponível em `http://localhost:8511`
 
 ```bash
 # Testar health check
-curl http://localhost:8000/api/health
+curl http://localhost:8511/api/health
+
+# Verificar status da GPU
+curl http://localhost:8511/api/gpu-status
 
 # Testar transcrição (exemplo)
-curl -X POST "http://localhost:8000/api/transcribe" \
+curl -X POST "http://localhost:8511/api/transcribe" \
   -F "file=@seu_audio.opus" \
   -F "language=pt"
 ```

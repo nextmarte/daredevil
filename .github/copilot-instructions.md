@@ -62,6 +62,13 @@ POST /api/transcribe/batch
 
 ## Boas Práticas de Código
 
+### GPU e Performance
+- Detectar automaticamente GPU disponível (torch.cuda.is_available())
+- Usar GPU quando disponível para acelerar transcrição
+- Log de informações de GPU (nome, memória, etc.)
+- Fallback gracioso para CPU se GPU não disponível
+- Monitorar uso de memória GPU durante processamento
+
 ### Processamento de Áudio
 - Sempre converter áudio para formato compatível (wav/mp3)
 - Normalizar sample rate para 16kHz (otimizado para Whisper)
@@ -145,14 +152,34 @@ uv add django django-ninja openai-whisper pydub python-multipart ffmpeg-python
 # Sincronizar ambiente
 uv sync
 
-# Executar comando no ambiente
+# Executar comando no ambiente (SEMPRE usar uv run)
 uv run python manage.py runserver
+
+# Executar qualquer script Python
+uv run python script.py
 
 # Executar shell Python
 uv run python
 
-# Ativar ambiente virtual (se necessário)
-source .venv/bin/activate
+# Ver versão do UV
+uv --version
+
+# IMPORTANTE: NO DOCKER, sempre usar 'uv run' antes de qualquer comando Python
+# Exemplo: uv run python manage.py migrate
+```
+
+## Docker e UV
+**CRÍTICO**: No ambiente Docker, o UV gerencia um ambiente virtual isolado. Portanto:
+- ✅ **SEMPRE** usar `uv run python manage.py <comando>`
+- ✅ **SEMPRE** usar `uv run python script.py`
+- ❌ **NUNCA** usar apenas `python manage.py <comando>` (não encontrará os pacotes)
+- ❌ **NUNCA** usar `pip install` (usar `uv add` em vez disso)
+
+O `docker-entrypoint.sh` deve executar:
+```bash
+uv sync                                    # Instala dependências
+uv run python manage.py migrate           # Usa ambiente do UV
+uv run python manage.py runserver         # Usa ambiente do UV
 ```
 
 ## Variáveis de Ambiente

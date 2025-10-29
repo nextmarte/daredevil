@@ -6,18 +6,21 @@ API de transcrição de áudio em português usando Django Ninja e Whisper (Open
 
 - ✅ Transcrição de alta qualidade usando Whisper
 - ✅ Otimizado para português brasileiro
+- ✅ **Aceleração por GPU (NVIDIA CUDA)** para processamento até 10x mais rápido
 - ✅ Suporte a múltiplos formatos: WhatsApp (.opus, .ogg), Instagram (.mp4, .m4a), e formatos padrão (.mp3, .wav, .flac)
 - ✅ Transcrição com timestamps detalhados
 - ✅ Processamento em lote
 - ✅ API RESTful moderna com Django Ninja
 - ✅ Documentação automática (Swagger/OpenAPI)
 - ✅ Validação automática com Pydantic
+- ✅ Deploy com Docker e suporte a GPU
 
 ## 📋 Requisitos
 
 - Python 3.12+
 - uv (gerenciador de pacotes)
 - ffmpeg (para processamento de áudio)
+- **GPU NVIDIA (opcional)**: Para aceleração de processamento com CUDA
 
 ### Instalar ffmpeg
 
@@ -31,6 +34,15 @@ brew install ffmpeg
 # Arch Linux
 sudo pacman -S ffmpeg
 ```
+
+### GPU Support (Opcional)
+
+Para habilitar aceleração por GPU NVIDIA, consulte o guia completo: **[GPU_SETUP.md](GPU_SETUP.md)**
+
+**Benefícios da GPU:**
+- Processamento 5-10x mais rápido
+- Suporte a modelos maiores (large) sem lentidão
+- Melhor para processamento em lote
 
 ## 🛠️ Instalação
 
@@ -79,6 +91,33 @@ GET /api/health
 ```
 
 Verifica o status da API e configurações.
+
+### GPU Status
+```bash
+GET /api/gpu-status
+```
+
+Verifica se GPU está disponível e mostra informações de memória.
+
+**Exemplo de resposta com GPU:**
+```json
+{
+  "gpu_available": true,
+  "device": "cuda",
+  "gpu_count": 1,
+  "gpus": [
+    {
+      "id": 0,
+      "name": "NVIDIA GeForce RTX 3060",
+      "memory_allocated_gb": 2.5,
+      "memory_reserved_gb": 3.0,
+      "memory_total_gb": 12.0,
+      "memory_free_gb": 9.0,
+      "compute_capability": "8.6"
+    }
+  ]
+}
+```
 
 ### Transcrever Áudio
 ```bash
@@ -186,17 +225,30 @@ LOG_LEVEL=INFO
 
 ### Modelos Whisper
 
-| Modelo | Tamanho | RAM Necessária | Velocidade | Qualidade |
-|--------|---------|----------------|------------|-----------|
-| tiny   | ~39 MB  | ~1 GB          | Muito rápido | Básica |
-| base   | ~74 MB  | ~1 GB          | Rápido     | Boa    |
-| small  | ~244 MB | ~2 GB          | Moderado   | Muito boa |
-| medium | ~769 MB | ~5 GB          | Lento      | Excelente |
-| large  | ~1.5 GB | ~10 GB         | Muito lento | Melhor |
+| Modelo | Tamanho | RAM Necessária | GPU VRAM | Velocidade (CPU) | Velocidade (GPU) | Qualidade |
+|--------|---------|----------------|----------|------------------|------------------|-----------|
+| tiny   | ~39 MB  | ~1 GB          | ~1 GB    | Muito rápido     | Extremamente rápido | Básica |
+| base   | ~74 MB  | ~1 GB          | ~1 GB    | Rápido           | Muito rápido     | Boa    |
+| small  | ~244 MB | ~2 GB          | ~2 GB    | Moderado         | Rápido           | Muito boa |
+| medium | ~769 MB | ~5 GB          | ~5 GB    | Lento            | Moderado         | Excelente |
+| large  | ~1.5 GB | ~10 GB         | ~10 GB   | Muito lento      | Moderado         | Melhor |
 
-**Recomendação:** Use `medium` para melhor equilíbrio entre qualidade e velocidade.
+**Recomendação:** 
+- Com CPU: Use `small` ou `medium`
+- Com GPU: Use `medium` ou `large` para melhor qualidade
 
 ## 🧪 Testando
+
+### Testar configuração da GPU
+```bash
+uv run python test_gpu.py
+```
+
+Este script verifica:
+- Se NVIDIA drivers estão instalados
+- Se PyTorch detecta a GPU
+- Se Whisper pode usar a GPU
+- Informações de memória e capacidade da GPU
 
 ### Teste rápido com Python
 ```python

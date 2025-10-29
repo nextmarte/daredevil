@@ -134,15 +134,62 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Whisper Configuration
 WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'medium')
-MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 25))
+WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', 'pt')  # Português como padrão
+WHISPER_LANGUAGE_NAME = 'pt-BR'  # Português Brasileiro
+MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 500))  # 500 MB padrão
 TEMP_AUDIO_DIR = os.getenv('TEMP_AUDIO_DIR', '/tmp/daredevil')
 ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
 
 # Create temp directory if it doesn't exist
 Path(TEMP_AUDIO_DIR).mkdir(parents=True, exist_ok=True)
 
+# Django Upload Limits - Configurar para permitir uploads grandes
+# 500 MB em bytes (500 * 1024 * 1024)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024  # 500 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024  # 500 MB
+FILE_UPLOAD_PERMISSIONS = 0o644
+
 # Supported audio formats
 SUPPORTED_AUDIO_FORMATS = [
     'opus', 'ogg', 'm4a', 'aac',  # WhatsApp/Instagram
     'mp4', 'mp3', 'wav', 'flac', 'webm'  # Standard formats
 ]
+
+# Supported video formats (áudio será extraído automaticamente)
+SUPPORTED_VIDEO_FORMATS = [
+    'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'webm', 'ogv',
+    'ts', 'mts', 'm2ts', '3gp', 'f4v', 'asf'
+]
+
+# All supported formats (áudio + vídeo)
+ALL_SUPPORTED_FORMATS = SUPPORTED_AUDIO_FORMATS + SUPPORTED_VIDEO_FORMATS
+
+# Português Brasileiro - configurações de processamento de texto
+PORTUGUESE_BR_CONFIG = {
+    'language_code': 'pt',
+    'language_name': 'português',
+    'country': 'Brasil',
+    'locale': 'pt_BR',
+    'encoding': 'utf-8',
+    # Hesitações comuns em português a remover
+    'hesitations': [
+        'hã', 'hm', 'hmm', 'ah', 'é', 'tipo', 'sabe', 'entendeu',
+        'né', 'tá', 'ahn', 'mm', 'huh', 'hun', 'shh'
+    ],
+    # Palavras a capitalizar no início de frases
+    'capitalize_after': ['.', '!', '?', '\n'],
+    # Abreviações comuns em português
+    'abbreviations': {
+        'sr': 'Sr.',
+        'sra': 'Sra.',
+        'dr': 'Dr.',
+        'dra': 'Dra.',
+        'prof': 'Prof.',
+        'profa': 'Profa.',
+        'obs': 'Obs.',
+        'tel': 'Tel.',
+        'cia': 'Cia.',
+        'ltda': 'Ltda.',
+        'inc': 'Inc.'
+    }
+}

@@ -7,13 +7,27 @@ services:
     container_name: daredevil_web
     ports:
       - "0.0.0.0:8511:8000"
+    # Habilitar GPU NVIDIA
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Usa todas as GPUs disponíveis (ou especifique um número)
+              capabilities: [gpu]
+        limits:
+          memory: 16G  # Limite de memória RAM
     environment:
       - DEBUG=1
       - WHISPER_MODEL=medium
-      - MAX_AUDIO_SIZE_MB=25
+      - WHISPER_LANGUAGE=pt
+      - MAX_AUDIO_SIZE_MB=500
       - TEMP_AUDIO_DIR=/tmp/daredevil
       - ALLOWED_HOSTS=*,http://cid-uff.net
       - PYTHONUNBUFFERED=1
+      - LANGUAGE=pt_BR.UTF-8
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
     volumes:
       - ./:/app
     working_dir: /app
