@@ -2,6 +2,7 @@
 Serviço de processamento de áudio e transcrição usando Whisper
 """
 import os
+import gc
 import time
 import hashlib
 import logging
@@ -21,6 +22,7 @@ from .schemas import (
 )
 from .portuguese_processor import PortugueseBRTextProcessor
 from .video_processor import VideoProcessor, MediaTypeDetector
+from .cache_manager import get_cache_manager
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +162,7 @@ class WhisperTranscriber:
     _model = None
     _current_model_name = None
     _device = None
+    _gpu_memory_threshold = 0.9  # 90% de uso antes de fallback para CPU
 
     @classmethod
     def get_device(cls) -> str:
@@ -180,14 +183,81 @@ class WhisperTranscriber:
                 logger.info("GPU não disponível, usando CPU")
                 
         return cls._device
+    
+    @classmethod
+    def check_gpu_memory(cls) -> Dict[str, float]:
+        """
+        Verifica uso atual de memória GPU
+        
+        Returns:
+            Dict com informações de memória (allocated, reserved, total, free)
+        """
+        if not torch.cuda.is_available():
+            return {}
+        
+        try:
+            allocated = torch.cuda.memory_allocated(0) / (1024**3)
+            reserved = torch.cuda.memory_reserved(0) / (1024**3)
+            total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            free = total - reserved
+            usage_percent = (reserved / total) * 100
+            
+            return {
+                "allocated_gb": round(allocated, 2),
+                "reserved_gb": round(reserved, 2),
+                "total_gb": round(total, 2),
+                "free_gb": round(free, 2),
+                "usage_percent": round(usage_percent, 2)
+            }
+        except Exception as e:
+            logger.error(f"Erro ao verificar memória GPU: {e}")
+            return {}
+    
+    @classmethod
+    def clear_gpu_memory(cls) -> None:
+        """Limpa memória GPU não utilizada"""
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                gc.collect()
+                logger.debug("Cache GPU limpo")
+            except Exception as e:
+                logger.error(f"Erro ao limpar cache GPU: {e}")
+    
+    @classmethod
+    def should_use_cpu_fallback(cls) -> bool:
+        """
+        Verifica se deve usar fallback para CPU devido a pressão de memória
+        
+        Returns:
+            True se deve usar CPU, False se pode usar GPU
+        """
+        if not torch.cuda.is_available():
+            return True
+        
+        memory_info = cls.check_gpu_memory()
+        if not memory_info:
+            return False
+        
+        usage_percent = memory_info.get("usage_percent", 0) / 100
+        if usage_percent > cls._gpu_memory_threshold:
+            logger.warning(
+                f"GPU com {usage_percent*100:.1f}% de uso, "
+                f"usando fallback para CPU"
+            )
+            return True
+        
+        return False
 
     @classmethod
-    def load_model(cls, model_name: Optional[str] = None) -> whisper.Whisper:
+    def load_model(cls, model_name: Optional[str] = None, force_cpu: bool = False) -> whisper.Whisper:
         """
         Carrega modelo Whisper (singleton) no dispositivo apropriado
+        Com cache persistente em GPU para evitar recarregamento
 
         Args:
             model_name: Nome do modelo (tiny, base, small, medium, large)
+            force_cpu: Forçar uso de CPU mesmo se GPU disponível
 
         Returns:
             whisper.Whisper: Modelo carregado
@@ -195,30 +265,59 @@ class WhisperTranscriber:
         if model_name is None:
             model_name = settings.WHISPER_MODEL
 
-        device = cls.get_device()
+        # Determinar dispositivo
+        if force_cpu or cls.should_use_cpu_fallback():
+            device = "cpu"
+        else:
+            device = cls.get_device()
 
-        # Reutilizar modelo se já estiver carregado
+        # Reutilizar modelo se já estiver carregado no mesmo dispositivo
         if cls._model is not None and cls._current_model_name == model_name:
-            logger.info(f"Reutilizando modelo Whisper: {model_name} ({device})")
-            return cls._model
+            # Verificar se está no dispositivo correto
+            model_device = str(next(cls._model.parameters()).device)
+            if device in model_device or (device == "cpu" and "cuda" not in model_device):
+                logger.info(f"Reutilizando modelo Whisper em cache: {model_name} ({device})")
+                return cls._model
+            else:
+                logger.info(f"Modelo em dispositivo diferente, recarregando...")
+                cls._model = None
+                cls.clear_gpu_memory()
 
         logger.info(f"Carregando modelo Whisper: {model_name} no dispositivo: {device}")
         start_time = time.time()
 
         try:
+            # Limpar memória antes de carregar modelo grande
+            if device == "cuda":
+                cls.clear_gpu_memory()
+                memory_before = cls.check_gpu_memory()
+                logger.info(f"Memória GPU antes do carregamento: {memory_before}")
+            
             cls._model = whisper.load_model(model_name, device=device)
             cls._current_model_name = model_name
 
             load_time = time.time() - start_time
             logger.info(f"Modelo carregado em {load_time:.2f}s")
             
-            # Log de memória GPU se disponível
+            # Log de memória GPU após carregamento
             if device == "cuda":
-                memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
-                logger.info(f"Memória GPU alocada: {memory_allocated:.2f}GB")
+                memory_after = cls.check_gpu_memory()
+                logger.info(f"Memória GPU após carregamento: {memory_after}")
+                memory_used = memory_after.get("reserved_gb", 0) - memory_before.get("reserved_gb", 0)
+                logger.info(f"Memória GPU usada pelo modelo: {memory_used:.2f}GB")
 
             return cls._model
 
+        except RuntimeError as e:
+            error_str = str(e)
+            if "out of memory" in error_str.lower() and device == "cuda":
+                logger.error(f"GPU sem memória suficiente, tentando fallback para CPU...")
+                cls.clear_gpu_memory()
+                # Tentar novamente em CPU
+                return cls.load_model(model_name, force_cpu=True)
+            else:
+                logger.error(f"Erro ao carregar modelo Whisper: {e}")
+                raise RuntimeError(f"Falha ao carregar modelo: {str(e)}")
         except Exception as e:
             logger.error(f"Erro ao carregar modelo Whisper: {e}")
             raise RuntimeError(f"Falha ao carregar modelo: {str(e)}")
@@ -231,7 +330,7 @@ class WhisperTranscriber:
         model_name: Optional[str] = None
     ) -> TranscriptionResult:
         """
-        Transcreve arquivo de áudio
+        Transcreve arquivo de áudio com otimizações de GPU
 
         Args:
             audio_path: Caminho do arquivo de áudio (WAV 16kHz)
@@ -246,17 +345,24 @@ class WhisperTranscriber:
             language = settings.WHISPER_LANGUAGE
         
         model = cls.load_model(model_name)
+        device = str(next(model.parameters()).device)
 
-        logger.info(f"Transcrevendo áudio: {audio_path} (idioma: {language})")
+        logger.info(f"Transcrevendo áudio: {audio_path} (idioma: {language}, device: {device})")
         start_time = time.time()
+        
+        # Log memória antes da transcrição
+        if "cuda" in device:
+            memory_before = cls.check_gpu_memory()
+            logger.debug(f"Memória GPU antes da transcrição: {memory_before}")
 
         try:
             # Transcrever com Whisper
+            use_fp16 = "cuda" in device  # Usar FP16 apenas em GPU
             result = model.transcribe(
                 audio_path,
                 language=language,
                 verbose=False,
-                fp16=torch.cuda.is_available()  # Usar FP16 em GPU para economizar memória
+                fp16=use_fp16
             )
 
             # Processar segmentos
@@ -282,6 +388,12 @@ class WhisperTranscriber:
 
             transcription_time = time.time() - start_time
             logger.info(f"Transcrição concluída em {transcription_time:.2f}s")
+            
+            # Limpar memória GPU após transcrição
+            if "cuda" in device:
+                memory_after = cls.check_gpu_memory()
+                logger.debug(f"Memória GPU após transcrição: {memory_after}")
+                cls.clear_gpu_memory()
 
             return TranscriptionResult(
                 text=full_text,
@@ -290,6 +402,26 @@ class WhisperTranscriber:
                 duration=result.get('duration', 0)
             )
 
+        except RuntimeError as e:
+            error_str = str(e)
+            
+            # Tratamento de erro de memória GPU
+            if "out of memory" in error_str.lower():
+                logger.error("GPU sem memória, tentando novamente com CPU...")
+                cls.clear_gpu_memory()
+                # Recarregar modelo em CPU e tentar novamente
+                model = cls.load_model(model_name, force_cpu=True)
+                return cls.transcribe(audio_path, language, model_name)
+            
+            # Erro específico de tensor vazio do Whisper
+            if "cannot reshape tensor of 0 elements" in error_str:
+                raise RuntimeError(
+                    f"Falha na transcrição: Arquivo de áudio inválido ou vazio. "
+                    f"O arquivo pode estar corrompido, não conter áudio válido, ou ter duração muito curta."
+                )
+            
+            raise RuntimeError(f"Falha na transcrição: {error_str}")
+        
         except Exception as e:
             logger.error(f"Erro na transcrição: {e}")
             error_str = str(e)
@@ -308,25 +440,36 @@ class TranscriptionService:
     """Serviço principal de transcrição - orquestra todo o processo"""
 
     @staticmethod
-    def generate_cache_key(file_path: str) -> str:
-        """Gera chave de cache baseada no hash do arquivo"""
-        with open(file_path, 'rb') as f:
-            file_hash = hashlib.md5(f.read()).hexdigest()
-        return file_hash
+    def generate_cache_key(file_path: str, model: str = None, language: str = None) -> str:
+        """
+        Gera chave de cache baseada no hash do arquivo e parâmetros
+        
+        Args:
+            file_path: Caminho do arquivo
+            model: Modelo usado
+            language: Idioma usado
+            
+        Returns:
+            Chave de cache
+        """
+        cache_manager = get_cache_manager()
+        return cache_manager.generate_cache_key(file_path, model, language)
 
     @staticmethod
     def process_audio_file(
         file_path: str,
         language: str = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        use_cache: bool = True
     ) -> TranscriptionResponse:
         """
-        Processa arquivo de áudio ou vídeo completo
+        Processa arquivo de áudio ou vídeo completo com cache inteligente
 
         Args:
             file_path: Caminho do arquivo de áudio ou vídeo
             language: Idioma para transcrição (padrão: português brasileiro)
             model: Modelo Whisper a usar
+            use_cache: Se True, usa cache quando disponível
 
         Returns:
             TranscriptionResponse: Resposta completa da transcrição
@@ -338,6 +481,51 @@ class TranscriptionService:
         start_time = time.time()
         temp_wav_path = None
         extension = Path(file_path).suffix.lstrip('.').lower()
+        
+        # Verificar cache se habilitado
+        cache_key = None
+        if use_cache and settings.ENABLE_CACHE:
+            try:
+                cache_manager = get_cache_manager()
+                cache_key = cache_manager.generate_cache_key(file_path, model, language)
+                cached_result = cache_manager.get(cache_key)
+                
+                if cached_result:
+                    logger.info(f"Usando resultado do cache (chave: {cache_key[:16]}...)")
+                    processing_time = time.time() - start_time
+                    
+                    # Converter dados cacheados de volta para objetos
+                    transcription_dict = cached_result.get("transcription")
+                    audio_info_dict = cached_result.get("audio_info")
+                    
+                    # Reconstruir objetos
+                    if transcription_dict:
+                        segments = [
+                            TranscriptionSegment(**seg) 
+                            for seg in transcription_dict.get("segments", [])
+                        ]
+                        transcription = TranscriptionResult(
+                            text=transcription_dict["text"],
+                            segments=segments,
+                            language=transcription_dict["language"],
+                            duration=transcription_dict["duration"]
+                        )
+                    else:
+                        transcription = None
+                    
+                    audio_info = AudioInfo(**audio_info_dict) if audio_info_dict else None
+                    
+                    return TranscriptionResponse(
+                        success=cached_result.get("success", True),
+                        transcription=transcription,
+                        processing_time=round(processing_time, 2),
+                        audio_info=audio_info,
+                        error=cached_result.get("error"),
+                        cached=True
+                    )
+            except Exception as e:
+                logger.warning(f"Erro ao verificar cache: {e}")
+                # Continuar sem cache em caso de erro
 
         try:
             # Detectar se é vídeo
@@ -451,14 +639,33 @@ class TranscriptionService:
             )
 
             processing_time = time.time() - start_time
-
-            return TranscriptionResponse(
+            
+            result = TranscriptionResponse(
                 success=True,
                 transcription=transcription,
                 processing_time=round(processing_time, 2),
                 audio_info=audio_info,
                 error=None
             )
+            
+            # Salvar no cache se habilitado
+            if use_cache and settings.ENABLE_CACHE and cache_key:
+                try:
+                    cache_manager = get_cache_manager()
+                    # Converter para dicionário para serialização
+                    cache_data = {
+                        "success": result.success,
+                        "transcription": transcription.dict() if transcription else None,
+                        "audio_info": audio_info.dict() if audio_info else None,
+                        "processing_time": result.processing_time,
+                        "error": result.error
+                    }
+                    cache_manager.set(cache_key, cache_data)
+                    logger.info(f"Resultado salvo no cache (chave: {cache_key[:16]}...)")
+                except Exception as e:
+                    logger.warning(f"Erro ao salvar no cache: {e}")
+            
+            return result
 
         except Exception as e:
             logger.error(f"Erro no processamento: {e}", exc_info=True)

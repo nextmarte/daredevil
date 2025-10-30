@@ -20,6 +20,7 @@ from .schemas import (
     TranscribeRequest
 )
 from .services import TranscriptionService, WhisperTranscriber
+from .cache_manager import get_cache_manager
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,61 @@ def gpu_status(request: HttpRequest):
         })
     
     return gpu_info
+
+
+@api.get("/cache-stats", tags=["Health"])
+def cache_stats(request: HttpRequest):
+    """
+    Retorna estatísticas do cache de transcrições
+    
+    Mostra hits, misses, hit rate e tamanho atual do cache.
+    """
+    if not settings.ENABLE_CACHE:
+        return {
+            "cache_enabled": False,
+            "message": "Cache desabilitado"
+        }
+    
+    try:
+        cache_manager = get_cache_manager()
+        stats = cache_manager.get_stats()
+        stats["cache_enabled"] = True
+        return stats
+    except Exception as e:
+        logger.error(f"Erro ao obter estatísticas do cache: {e}")
+        return {
+            "cache_enabled": True,
+            "error": str(e)
+        }
+
+
+@api.post("/cache/clear", tags=["Health"])
+def clear_cache(request: HttpRequest):
+    """
+    Limpa todo o cache de transcrições
+    
+    Remove todos os itens do cache em memória e disco (se habilitado).
+    Requer autenticação em produção.
+    """
+    if not settings.ENABLE_CACHE:
+        return {
+            "success": False,
+            "message": "Cache desabilitado"
+        }
+    
+    try:
+        cache_manager = get_cache_manager()
+        cache_manager.clear()
+        return {
+            "success": True,
+            "message": "Cache limpo com sucesso"
+        }
+    except Exception as e:
+        logger.error(f"Erro ao limpar cache: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 @api.post("/transcribe", response=TranscriptionResponse, tags=["Transcription"])

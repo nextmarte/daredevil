@@ -140,6 +140,14 @@ MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 500))  # 500 MB padrão
 TEMP_AUDIO_DIR = os.getenv('TEMP_AUDIO_DIR', '/tmp/daredevil')
 ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
 
+# Cache Configuration
+CACHE_SIZE = int(os.getenv('CACHE_SIZE', 100))  # Número máximo de itens no cache
+CACHE_TTL_SECONDS = int(os.getenv('CACHE_TTL_SECONDS', 3600))  # 1 hora padrão
+ENABLE_DISK_CACHE = os.getenv('ENABLE_DISK_CACHE', 'false').lower() == 'true'
+
+# GPU Configuration
+GPU_MEMORY_THRESHOLD = float(os.getenv('GPU_MEMORY_THRESHOLD', 0.9))  # 90% uso antes de fallback CPU
+
 # Create temp directory if it doesn't exist
 Path(TEMP_AUDIO_DIR).mkdir(parents=True, exist_ok=True)
 
