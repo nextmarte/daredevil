@@ -118,6 +118,28 @@ CELERY_RESULT_BACKEND=redis://localhost:6379/0
 - ⚠️ Redis connection tests skipped (requires running Redis)
 - ⚠️ Docker compose validation skipped (yaml module not available)
 
+### Endpoints Disponíveis (porta 8511)
+```bash
+# GPU Status
+curl http://localhost:8511/api/gpu-status
+
+# Cache Statistics
+curl http://localhost:8511/api/cache-stats
+
+# Health Check
+curl http://localhost:8511/api/health
+
+# Transcrever (async)
+curl -X POST http://localhost:8511/api/transcribe/async \
+  -F "file=@audio.mp3"
+
+# Swagger UI
+open http://localhost:8511/api/docs
+
+# ReDoc
+open http://localhost:8511/api/redoc
+```
+
 ## Performance Targets vs Current State
 
 | Scenario | Before | Target | Expected After | Status |
