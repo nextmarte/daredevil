@@ -292,7 +292,16 @@ class WhisperTranscriber:
 
         except Exception as e:
             logger.error(f"Erro na transcrição: {e}")
-            raise RuntimeError(f"Falha na transcrição: {str(e)}")
+            error_str = str(e)
+            
+            # Erro específico de tensor vazio do Whisper
+            if "cannot reshape tensor of 0 elements" in error_str:
+                raise RuntimeError(
+                    f"Falha na transcrição: Arquivo de áudio inválido ou vazio. "
+                    f"O arquivo pode estar corrompido, não conter áudio válido, ou ter duração muito curta."
+                )
+            
+            raise RuntimeError(f"Falha na transcrição: {error_str}")
 
 
 class TranscriptionService:
@@ -421,6 +430,18 @@ class TranscriptionService:
                     transcribe_path = temp_wav_path
                 else:
                     transcribe_path = file_path
+
+            # Validar que o arquivo WAV tem conteúdo válido antes de transcrever
+            wav_file_size = os.path.getsize(transcribe_path)
+            if wav_file_size < 1000:  # Mínimo de 1KB
+                logger.error(f"Arquivo WAV muito pequeno ({wav_file_size} bytes) - provavelmente vazio ou corrompido")
+                return TranscriptionResponse(
+                    success=False,
+                    transcription=None,
+                    processing_time=time.time() - start_time,
+                    audio_info=None,
+                    error=f"Arquivo de áudio inválido ou vazio ({wav_file_size} bytes). Pode ser que o arquivo não tenha faixa de áudio ou esteja corrompido."
+                )
 
             # Transcrever
             transcription = WhisperTranscriber.transcribe(

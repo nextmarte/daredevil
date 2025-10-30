@@ -18,12 +18,12 @@ services:
         limits:
           memory: 16G  # Limite de memória RAM
     environment:
-      - DEBUG=1
+      - DEBUG=0
       - WHISPER_MODEL=medium
       - WHISPER_LANGUAGE=pt
       - MAX_AUDIO_SIZE_MB=500
       - TEMP_AUDIO_DIR=/tmp/daredevil
-      - ALLOWED_HOSTS=*,http://cid-uff.net
+      - ALLOWED_HOSTS=*
       - PYTHONUNBUFFERED=1
       - LANGUAGE=pt_BR.UTF-8
       - LANG=pt_BR.UTF-8

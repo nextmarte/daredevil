@@ -52,6 +52,10 @@ class VideoProcessor:
             if result.returncode != 0:
                 return False, "Arquivo de vídeo corrompido ou inválido"
             
+            # Verificar se tem faixa de áudio
+            if not result.stdout.strip():
+                return False, "Arquivo de vídeo não contém faixa de áudio"
+            
             return True, None
         except FileNotFoundError:
             return False, "ffprobe não encontrado. Instale ffmpeg."
@@ -158,7 +162,18 @@ class VideoProcessor:
             )
             
             if result.returncode == 0 and os.path.exists(output_path):
-                file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                file_size = os.path.getsize(output_path)
+                file_size_mb = file_size / (1024 * 1024)
+                
+                # Validar que o arquivo tem tamanho mínimo
+                if file_size < 1000:  # Mínimo de 1KB
+                    logger.error(f"Arquivo WAV extraído muito pequeno ({file_size} bytes) - provavelmente sem áudio")
+                    try:
+                        os.remove(output_path)
+                    except:
+                        pass
+                    return False, "Vídeo não contém faixa de áudio válida ou está corrompido"
+                
                 logger.info(f"Áudio extraído com sucesso: {output_path} ({file_size_mb:.2f}MB)")
                 return True, output_path
             else:
