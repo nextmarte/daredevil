@@ -2,11 +2,31 @@
 
 API completa de transcrição de áudio e vídeo em português brasileiro usando Django Ninja e Whisper (OpenAI). Suporta múltiplos formatos, aceleração por GPU NVIDIA, e processamento inteligente de texto.
 
+## ⚡ Performance Otimizada (NOVO!)
+
+**Melhorias implementadas para velocidade 2-3x maior:**
+
+- 🚀 **Cache Inteligente**: Resultados salvos automaticamente (LRU + TTL)
+- 🎯 **GPU Persistente**: Modelo mantido em memória GPU entre requisições
+- 🔄 **Processamento Assíncrono**: Celery + Redis para jobs em background
+- 📊 **Monitoramento Real-time**: Status de GPU e cache via API
+- 🔁 **Retry Automático**: Jobs falhos são retentados automaticamente
+- 📢 **Webhooks**: Notificação automática quando transcrição completa
+
+**Performance esperada:**
+- Audio 1min: ~12s → **<8s** (cache: **<0.1s**)
+- Video 5min: ~60s → **<45s** (cache: **<0.1s**)
+- Video 30min: ~5min → **<2min**
+
+📖 **[Ver documentação completa de otimizações →](PERFORMANCE_OPTIMIZATION.md)**
+
 ## 🚀 Características Principais
 
 - ✅ **Transcrição de alta qualidade** usando Whisper (OpenAI)
 - ✅ **Otimizado para português brasileiro** com pós-processamento automático
 - ✅ **Aceleração por GPU NVIDIA (CUDA 12.1)** - processamento até 10x mais rápido
+- ✅ **Cache inteligente** - resultados instantâneos para arquivos já processados
+- ✅ **Processamento assíncrono** - ideal para arquivos grandes e lotes
 - ✅ **Suporte a vídeos** - extração automática de áudio de 12 formatos de vídeo
 - ✅ **Suporte a múltiplos formatos de áudio** - WhatsApp, Instagram e formatos padrão
 - ✅ **Transcrição com timestamps detalhados** - precisão ao nível de segmento
@@ -334,6 +354,103 @@ curl -X POST "http://localhost:8000/api/transcribe/batch" \
   -F "files=@audio3.wav" \
   -F "language=pt"
 ```
+
+#### Transcrever Assíncrono (NOVO! ⚡)
+
+```bash
+POST /api/transcribe/async
+```
+
+Para arquivos grandes ou quando não quer bloquear a requisição.
+
+**Parâmetros:**
+- `file`: Arquivo de áudio ou vídeo
+- `language`: Código do idioma (padrão: "pt")
+- `model`: Modelo Whisper (opcional)
+- `webhook_url`: URL para notificação quando concluir (opcional)
+
+**Exemplo:**
+```bash
+curl -X POST "http://localhost:8000/api/transcribe/async" \
+  -F "file=@video_longo.mp4" \
+  -F "language=pt" \
+  -F "webhook_url=https://meusite.com/webhook"
+```
+
+**Resposta:**
+```json
+{
+  "success": true,
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status_url": "/api/transcribe/async/status/a1b2c3d4...",
+  "message": "Transcrição iniciada. Use task_id para consultar o status.",
+  "submission_time": 0.15
+}
+```
+
+#### Consultar Status de Tarefa Assíncrona (NOVO! ⚡)
+
+```bash
+GET /api/transcribe/async/status/{task_id}
+```
+
+**Exemplo:**
+```bash
+curl http://localhost:8000/api/transcribe/async/status/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+**Resposta (concluída):**
+```json
+{
+  "task_id": "a1b2c3d4...",
+  "state": "SUCCESS",
+  "result": {
+    "success": true,
+    "transcription": {
+      "text": "transcrição completa...",
+      "segments": [...],
+      "language": "pt"
+    },
+    "processing_time": 45.2
+  },
+  "message": "Transcrição concluída"
+}
+```
+
+#### Cancelar Tarefa Assíncrona (NOVO! ⚡)
+
+```bash
+DELETE /api/transcribe/async/{task_id}
+```
+
+#### Estatísticas de Cache (NOVO! ⚡)
+
+```bash
+GET /api/cache-stats
+```
+
+Retorna estatísticas do cache (hits, misses, hit rate).
+
+**Resposta:**
+```json
+{
+  "cache_enabled": true,
+  "size": 25,
+  "max_size": 100,
+  "hits": 150,
+  "misses": 50,
+  "hit_rate": 75.0,
+  "ttl_seconds": 3600
+}
+```
+
+#### Limpar Cache (NOVO! ⚡)
+
+```bash
+POST /api/cache/clear
+```
+
+Remove todos os itens do cache.
 
 ## 📁 Formatos Suportados
 
