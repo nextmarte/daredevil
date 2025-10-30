@@ -46,6 +46,7 @@ class TranscriptionResponse(BaseModel):
         description="Informações sobre o áudio processado"
     )
     error: Optional[str] = Field(None, description="Mensagem de erro se houver falha")
+    cached: bool = Field(default=False, description="Indica se o resultado veio do cache")
 
 
 class HealthResponse(BaseModel):

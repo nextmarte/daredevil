@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Third-party apps
+    'django_redis',
     # Local apps
     'transcription',
 ]
@@ -139,6 +141,30 @@ WHISPER_LANGUAGE_NAME = 'pt-BR'  # Português Brasileiro
 MAX_AUDIO_SIZE_MB = int(os.getenv('MAX_AUDIO_SIZE_MB', 500))  # 500 MB padrão
 TEMP_AUDIO_DIR = os.getenv('TEMP_AUDIO_DIR', '/tmp/daredevil')
 ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'true').lower() == 'true'
+
+# Cache Configuration
+CACHE_SIZE = int(os.getenv('CACHE_SIZE', 100))  # Número máximo de itens no cache
+CACHE_TTL_SECONDS = int(os.getenv('CACHE_TTL_SECONDS', 3600))  # 1 hora padrão
+ENABLE_DISK_CACHE = os.getenv('ENABLE_DISK_CACHE', 'false').lower() == 'true'
+
+# GPU Configuration
+GPU_MEMORY_THRESHOLD = float(os.getenv('GPU_MEMORY_THRESHOLD', 0.9))  # 90% uso antes de fallback CPU
+
+# Redis Configuration
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', REDIS_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutos
+CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutos (aviso antes do hard limit)
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Processar uma tarefa por vez
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 10  # Reiniciar worker após 10 tarefas (limpar memória)
 
 # Create temp directory if it doesn't exist
 Path(TEMP_AUDIO_DIR).mkdir(parents=True, exist_ok=True)
