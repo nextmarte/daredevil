@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: daredevil_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   web:
     # Build local com glibc (recomendado para torch/whisper)
     build: .
@@ -7,15 +22,73 @@ services:
     container_name: daredevil_web
     ports:
       - "0.0.0.0:8511:8000"
+    # Habilitar GPU NVIDIA
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Usa todas as GPUs disponíveis (ou especifique um número)
+              capabilities: [gpu]
+        limits:
+          memory: 16G  # Limite de memória RAM
     environment:
-      - DEBUG=1
+      - DEBUG=0
       - WHISPER_MODEL=medium
-      - MAX_AUDIO_SIZE_MB=25
+      - WHISPER_LANGUAGE=pt
+      - MAX_AUDIO_SIZE_MB=500
       - TEMP_AUDIO_DIR=/tmp/daredevil
-      - ALLOWED_HOSTS=*,http://cid-uff.net
+      - ALLOWED_HOSTS=*
       - PYTHONUNBUFFERED=1
+      - LANGUAGE=pt_BR.UTF-8
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     volumes:
       - ./:/app
     working_dir: /app
     entrypoint: ["/app/docker-entrypoint.sh"]
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+
+  celery_worker:
+    build: .
+    container_name: daredevil_celery_worker
+    command: celery -A config worker --loglevel=info --concurrency=2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          memory: 16G
+    environment:
+      - DEBUG=0
+      - WHISPER_MODEL=medium
+      - WHISPER_LANGUAGE=pt
+      - MAX_AUDIO_SIZE_MB=500
+      - TEMP_AUDIO_DIR=/tmp/daredevil
+      - PYTHONUNBUFFERED=1
+      - LANGUAGE=pt_BR.UTF-8
+      - LANG=pt_BR.UTF-8
+      - LC_ALL=pt_BR.UTF-8
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=config.settings
+    volumes:
+      - ./:/app
+    working_dir: /app
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
