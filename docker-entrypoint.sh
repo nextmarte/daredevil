@@ -25,7 +25,7 @@ acquire_lock() {
   local timeout=$1
   local elapsed=0
   
-  while [ $elapsed -lt $timeout ]; do
+  while [ "$elapsed" -lt "$timeout" ]; do
     # Tentar criar arquivo de lock (atomic operation)
     if mkdir "$LOCK_FILE" 2>/dev/null; then
       # Lock adquirido
@@ -36,7 +36,7 @@ acquire_lock() {
     # Verificar se lock está obsoleto (mais de 10 minutos)
     if [ -d "$LOCK_FILE" ]; then
       lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)))
-      if [ $lock_age -gt 600 ]; then
+      if [ "$lock_age" -gt 600 ]; then
         echo "Lock obsoleto detectado (idade: ${lock_age}s), removendo..."
         rm -rf "$LOCK_FILE"
         continue
@@ -65,7 +65,7 @@ release_lock() {
 trap release_lock EXIT
 
 # Adquirir lock e executar migrations
-if acquire_lock $LOCK_TIMEOUT; then
+if acquire_lock "$LOCK_TIMEOUT"; then
   echo "Applying migrations..."
   uv run python manage.py migrate --noinput || true
   uv run python manage.py collectstatic --noinput 2>/dev/null || true
