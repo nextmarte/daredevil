@@ -13,9 +13,37 @@ echo "UV version: $(uv --version)"
 echo "Running uv sync to install Python deps from pyproject.toml (uv-managed)..."
 uv sync
 
-echo "Applying migrations..."
-uv run python manage.py migrate --noinput || true
-uv run python manage.py collectstatic --noinput 2>/dev/null || true
+# Função para executar migrations com lock para evitar race condition
+# quando múltiplas réplicas tentam migrar ao mesmo tempo
+run_migrations_with_lock() {
+  local lockfile="/tmp/daredevil-migration.lock"
+  local lockfd=200
+  
+  # Criar diretório se não existir
+  mkdir -p /tmp
+  
+  # Tentar adquirir lock exclusivo com timeout
+  exec 200>"$lockfile"
+  
+  echo "Aguardando lock para executar migrations..."
+  if flock -w 300 200; then
+    echo "Lock adquirido, executando migrations..."
+    uv run python manage.py migrate --noinput || true
+    uv run python manage.py collectstatic --noinput 2>/dev/null || true
+    echo "Migrations concluídas, liberando lock..."
+    flock -u 200
+  else
+    echo "AVISO: Timeout ao aguardar lock de migrations (300s). Continuando mesmo assim..."
+    # Tentar executar migrations mesmo sem lock (melhor do que não executar)
+    uv run python manage.py migrate --noinput || true
+    uv run python manage.py collectstatic --noinput 2>/dev/null || true
+  fi
+  
+  exec 200>&-  # Fechar file descriptor
+}
+
+echo "Applying migrations with lock..."
+run_migrations_with_lock
 
 # Verificar se está em modo desenvolvimento ou produção
 if [ "$DEBUG" = "1" ]; then

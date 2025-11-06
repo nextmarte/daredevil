@@ -584,10 +584,11 @@ class TranscriptionService:
                     f"video_extract_{int(time.time())}_{os.getpid()}.wav"
                 )
                 
+                # Usar timeout adaptativo baseado no tamanho do arquivo
                 success, result_msg = VideoProcessor.extract_audio(
                     file_path,
                     temp_wav_path,
-                    timeout=1800  # 30 minutos para vídeos grandes
+                    timeout=None  # None = usar timeout adaptativo
                 )
                 
                 if not success:

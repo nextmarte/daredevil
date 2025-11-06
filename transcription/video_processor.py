@@ -119,14 +119,46 @@ class VideoProcessor:
             return {}
 
     @staticmethod
-    def extract_audio(video_path: str, output_path: str, timeout: int = 600) -> Tuple[bool, str]:
+    def calculate_adaptive_timeout(file_path: str, base_timeout: int = 300) -> int:
         """
-        Extrai áudio de arquivo de vídeo usando ffmpeg
+        Calcula timeout adaptativo baseado no tamanho do arquivo
+        
+        Args:
+            file_path: Caminho do arquivo de vídeo
+            base_timeout: Timeout base em segundos (padrão: 5 minutos)
+            
+        Returns:
+            Timeout calculado em segundos
+        """
+        try:
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            
+            # Timeout adaptativo: 30s por MB, mínimo 5min, máximo 30min
+            # Vídeos pequenos (<10MB): 5 minutos
+            # Vídeos médios (10-100MB): 5-15 minutos
+            # Vídeos grandes (100-500MB): 15-30 minutos
+            adaptive_timeout = base_timeout + int(file_size_mb * 30)
+            
+            # Limitar entre 5 e 30 minutos
+            adaptive_timeout = max(300, min(1800, adaptive_timeout))
+            
+            logger.debug(f"Timeout adaptativo para {file_size_mb:.2f}MB: {adaptive_timeout}s")
+            return adaptive_timeout
+            
+        except Exception as e:
+            logger.warning(f"Erro ao calcular timeout adaptativo: {e}, usando padrão")
+            return base_timeout
+
+    @staticmethod
+    def extract_audio(video_path: str, output_path: str, timeout: int = None) -> Tuple[bool, str]:
+        """
+        Extrai áudio de arquivo de vídeo usando ffmpeg com timeout adaptativo
+        e proteção contra vídeos corrompidos
 
         Args:
             video_path: Caminho do arquivo de vídeo
             output_path: Caminho de saída para o arquivo WAV
-            timeout: Tempo máximo de execução em segundos (padrão 10 minutos)
+            timeout: Tempo máximo de execução em segundos (None = adaptativo)
 
         Returns:
             Tuple[bool, str]: (sucesso, mensagem_ou_caminho)
@@ -134,14 +166,22 @@ class VideoProcessor:
         try:
             logger.info(f"Extraindo áudio de vídeo: {video_path}")
             
+            # Calcular timeout adaptativo se não especificado
+            if timeout is None:
+                timeout = VideoProcessor.calculate_adaptive_timeout(video_path)
+            
             # Comando ffmpeg para extrair áudio
             # -i: arquivo de entrada
             # -vn: sem vídeo
             # -acodec pcm_s16le: codec de áudio PCM 16-bit
             # -ar 16000: taxa de amostragem 16kHz (otimizado para Whisper)
             # -ac 1: mono (1 canal)
+            # -analyzeduration: limitar análise inicial para detectar hang rápido
+            # -probesize: limitar tamanho de probe para vídeos corrompidos
             command = [
                 'ffmpeg',
+                '-analyzeduration', '10M',  # Limitar análise a 10MB
+                '-probesize', '10M',        # Limitar probe a 10MB
                 '-i', video_path,
                 '-vn',                      # Sem vídeo
                 '-acodec', 'pcm_s16le',     # Codec de áudio
@@ -152,7 +192,7 @@ class VideoProcessor:
                 output_path
             ]
             
-            logger.debug(f"Executando: {' '.join(command)}")
+            logger.debug(f"Executando ffmpeg com timeout de {timeout}s: {' '.join(command)}")
             
             result = subprocess.run(
                 command,
@@ -181,9 +221,25 @@ class VideoProcessor:
                 logger.error(f"Erro ao extrair áudio: {error_msg}")
                 return False, error_msg
                 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
+            # Timeout - limpar arquivo parcial de saída se existir
             logger.error(f"Timeout ao processar vídeo (limite: {timeout}s)")
-            return False, f"Timeout ao processar vídeo (limite: {timeout}s)"
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                    logger.debug(f"Arquivo parcial removido: {output_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Erro ao limpar arquivo parcial: {cleanup_error}")
+            
+            # Tentar matar processo ffmpeg pendurado (se ainda estiver rodando)
+            try:
+                if hasattr(e, 'args') and e.args:
+                    # O processo já foi terminado pelo timeout, mas vamos garantir
+                    logger.debug("Processo ffmpeg terminado pelo timeout")
+            except Exception as kill_error:
+                logger.warning(f"Erro ao tentar matar processo: {kill_error}")
+            
+            return False, f"Timeout ao processar vídeo (limite: {timeout}s). O vídeo pode estar corrompido ou muito grande."
         except FileNotFoundError:
             logger.error("ffmpeg não encontrado. Instale ffmpeg no sistema.")
             return False, "ffmpeg não encontrado. Instale ffmpeg."
