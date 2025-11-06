@@ -19,6 +19,11 @@ class VideoProcessor:
         'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv', 'webm', 'ogv',
         'ts', 'mts', 'm2ts', '3gp', 'f4v', 'asf'
     ]
+    
+    # Constantes para timeout adaptativo
+    MIN_TIMEOUT_SECONDS = 60  # Mínimo 1 minuto
+    MAX_TIMEOUT_SECONDS = 1800  # Máximo 30 minutos
+    TIMEOUT_PER_MB = 1.0  # 1 segundo por MB de arquivo
 
     @staticmethod
     def validate_video_file(file_path: str, timeout: int = 10) -> Tuple[bool, Optional[str]]:
@@ -140,9 +145,12 @@ class VideoProcessor:
             logger.info(f"Extraindo áudio de vídeo: {video_path}")
             
             # ✅ Calcular timeout adaptativo baseado no tamanho do arquivo
-            # Regra: 1 segundo de timeout por MB de arquivo (mínimo 60s, máximo 1800s)
+            # Regra: TIMEOUT_PER_MB segundos por MB (mínimo MIN_TIMEOUT_SECONDS, máximo MAX_TIMEOUT_SECONDS)
             file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-            adaptive_timeout = max(60, min(int(file_size_mb * 1.0), 1800))
+            adaptive_timeout = max(
+                VideoProcessor.MIN_TIMEOUT_SECONDS,
+                min(int(file_size_mb * VideoProcessor.TIMEOUT_PER_MB), VideoProcessor.MAX_TIMEOUT_SECONDS)
+            )
             
             # Usar o maior entre timeout fornecido e timeout adaptativo
             actual_timeout = max(timeout, adaptive_timeout)

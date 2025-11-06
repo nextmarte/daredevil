@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
     # ✅ CRITICAL FIX: Adicionar configurações para evitar deadlock
     acks_late=True,  # Reconhece tarefa apenas após conclusão (permite retry se worker morrer)
     reject_on_worker_lost=True,  # Rejeita tarefa se worker morrer
-    autoretry_for=(Exception,),  # Retry automático em exceções
+    # Retry apenas em erros recuperáveis (não em todos)
+    autoretry_for=(ConnectionError, TimeoutError, IOError),  # Apenas erros de I/O/rede
     retry_backoff=True,  # Backoff exponencial entre retries
     retry_backoff_max=600,  # Máximo de 10 minutos entre retries
     retry_jitter=True  # Adiciona jitter aleatório para evitar thundering herd
@@ -125,7 +126,7 @@ def transcribe_audio_async(
     acks_late=True,
     reject_on_worker_lost=True,
     max_retries=1,  # Menos retries para batch jobs
-    autoretry_for=(Exception,),
+    autoretry_for=(ConnectionError, TimeoutError, IOError),  # Apenas erros de I/O/rede
     retry_backoff=True,
     retry_backoff_max=600,
     retry_jitter=True

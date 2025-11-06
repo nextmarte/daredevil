@@ -35,7 +35,15 @@ acquire_lock() {
     
     # Verificar se lock está obsoleto (mais de 10 minutos)
     if [ -d "$LOCK_FILE" ]; then
-      lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)))
+      # Tentar obter idade do lock de forma portável
+      if [ "$(uname)" = "Darwin" ]; then
+        # macOS (BSD stat)
+        lock_age=$(($(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || echo 0)))
+      else
+        # Linux (GNU stat)
+        lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)))
+      fi
+      
       if [ "$lock_age" -gt 600 ]; then
         echo "Lock obsoleto detectado (idade: ${lock_age}s), removendo..."
         rm -rf "$LOCK_FILE"

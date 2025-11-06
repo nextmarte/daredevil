@@ -715,9 +715,9 @@ class TranscriptionService:
                     logger.info(f"Arquivo temporário removido: {temp_wav_path}")
                 except Exception as e:
                     logger.error(f"CRÍTICO: Falha ao remover arquivo temporário {temp_wav_path}: {e}")
-                    # Tentar forçar remoção mesmo que dê erro
+                    # Tentar forçar remoção com permissões menos restritivas (apenas leitura/escrita para owner)
                     try:
-                        os.chmod(temp_wav_path, 0o777)  # Dar permissões totais
+                        os.chmod(temp_wav_path, 0o600)  # Apenas owner pode ler/escrever
                         os.remove(temp_wav_path)
                         logger.info(f"Arquivo temporário removido após alterar permissões")
                     except Exception as e2:

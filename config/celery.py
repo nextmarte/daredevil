@@ -24,7 +24,7 @@ app.conf.update(
     
     # Configurações de resiliência
     result_backend_transport_options={
-        'master_name': 'mymaster',  # Para Redis Sentinel (se usado)
+        'master_name': os.getenv('REDIS_SENTINEL_MASTER', 'mymaster'),  # Configurável via env
         'socket_keepalive': True,  # Keep-alive TCP
         'socket_keepalive_options': {
             1: 1,  # TCP_KEEPIDLE
