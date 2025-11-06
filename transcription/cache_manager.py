@@ -169,9 +169,60 @@ class TranscriptionCacheManager:
         
         return cache_key
     
+    def _validate_cache_data(self, cache_data: Any) -> bool:
+        """
+        Valida dados do cache para detectar corrupção
+        
+        Args:
+            cache_data: Dados do cache a validar
+            
+        Returns:
+            True se dados são válidos, False caso contrário
+        """
+        try:
+            # Verificar se é um dicionário
+            if not isinstance(cache_data, dict):
+                logger.warning("Cache inválido: não é um dicionário")
+                return False
+            
+            # Verificar campos obrigatórios
+            required_fields = ['success', 'processing_time']
+            for field in required_fields:
+                if field not in cache_data:
+                    logger.warning(f"Cache inválido: campo '{field}' ausente")
+                    return False
+            
+            # Validar tipos de dados
+            if not isinstance(cache_data['success'], bool):
+                logger.warning("Cache inválido: 'success' não é bool")
+                return False
+            
+            if not isinstance(cache_data['processing_time'], (int, float)):
+                logger.warning("Cache inválido: 'processing_time' não é numérico")
+                return False
+            
+            # Se tem transcrição, validar estrutura
+            if cache_data.get('transcription'):
+                transcription = cache_data['transcription']
+                if not isinstance(transcription, dict):
+                    logger.warning("Cache inválido: 'transcription' não é dicionário")
+                    return False
+                
+                # Validar campos da transcrição
+                if 'text' not in transcription or 'language' not in transcription:
+                    logger.warning("Cache inválido: campos obrigatórios da transcrição ausentes")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao validar cache: {e}")
+            return False
+    
     def get(self, cache_key: str) -> Optional[Dict[str, Any]]:
         """
         Busca transcrição no cache (memória primeiro, depois disco)
+        Com validação de dados para evitar corrupção
         
         Args:
             cache_key: Chave do cache
@@ -182,12 +233,34 @@ class TranscriptionCacheManager:
         # Tentar cache em memória primeiro
         cached_data = self.memory_cache.get(cache_key)
         if cached_data:
-            return cached_data
+            # Validar dados antes de retornar
+            if self._validate_cache_data(cached_data):
+                return cached_data
+            else:
+                logger.warning(f"Cache corrompido detectado (memória), removendo: {cache_key[:16]}...")
+                # Remover cache corrompido
+                with self.memory_cache.lock:
+                    self.memory_cache._remove(cache_key)
+                return None
         
         # Se habilitado, tentar cache em disco
         if self.enable_disk_cache:
-            return self._load_from_disk(cache_key)
-        
+            disk_data = self._load_from_disk(cache_key)
+            if disk_data:
+                # Validar dados do disco
+                if self._validate_cache_data(disk_data):
+                    return disk_data
+                else:
+                    logger.warning(f"Cache corrompido detectado (disco), removendo: {cache_key[:16]}...")
+                    # Remover arquivo corrompido
+                    try:
+                        cache_file = self.cache_dir / f"{cache_key}.json"
+                        if cache_file.exists():
+                            cache_file.unlink()
+                    except Exception as e:
+                        logger.error(f"Erro ao remover cache corrompido: {e}")
+                    return None
+            
         return None
     
     def set(self, cache_key: str, transcription_data: Dict[str, Any]) -> None:

@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
     name='transcription.transcribe_audio_async',
     time_limit=1800,  # 30 minutos
     soft_time_limit=1700,  # 28 minutos (aviso)
-    max_retries=2,
-    default_retry_delay=60  # 1 minuto entre retries
+    max_retries=3,  # Aumentado de 2 para 3
+    default_retry_delay=60,  # 1 minuto entre retries
+    autoretry_for=(ConnectionError, OSError),  # Auto-retry em erros de conexão Redis
+    retry_backoff=True,  # Backoff exponencial
+    retry_backoff_max=600,  # Máximo de 10 minutos
+    retry_jitter=True  # Adicionar jitter para evitar thundering herd
 )
 def transcribe_audio_async(
     self,
@@ -131,7 +135,13 @@ def transcribe_audio_async(
     bind=True,
     name='transcription.transcribe_batch_async',
     time_limit=3600,  # 1 hora para batch
-    soft_time_limit=3400
+    soft_time_limit=3400,
+    max_retries=2,
+    default_retry_delay=120,  # 2 minutos entre retries para batch
+    autoretry_for=(ConnectionError, OSError),  # Auto-retry em erros de conexão Redis
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True
 )
 def transcribe_batch_async(
     self,
