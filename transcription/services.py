@@ -678,6 +678,9 @@ class TranscriptionService:
             )
 
         finally:
+            # Limpar memória GPU para evitar vazamento de memória
+            WhisperTranscriber.clear_gpu_memory()
+            
             # Limpar arquivo temporário
             if temp_wav_path and os.path.exists(temp_wav_path):
                 try:
