@@ -231,14 +231,7 @@ class VideoProcessor:
                 except Exception as cleanup_error:
                     logger.warning(f"Erro ao limpar arquivo parcial: {cleanup_error}")
             
-            # Tentar matar processo ffmpeg pendurado (se ainda estiver rodando)
-            try:
-                if hasattr(e, 'args') and e.args:
-                    # O processo já foi terminado pelo timeout, mas vamos garantir
-                    logger.debug("Processo ffmpeg terminado pelo timeout")
-            except Exception as kill_error:
-                logger.warning(f"Erro ao tentar matar processo: {kill_error}")
-            
+            # subprocess.run() já mata o processo automaticamente no timeout
             return False, f"Timeout ao processar vídeo (limite: {timeout}s). O vídeo pode estar corrompido ou muito grande."
         except FileNotFoundError:
             logger.error("ffmpeg não encontrado. Instale ffmpeg no sistema.")

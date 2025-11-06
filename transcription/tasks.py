@@ -9,7 +9,7 @@ from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 
-from .services import TranscriptionService
+from .services import TranscriptionService, WhisperTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,6 @@ def transcribe_audio_async(
     finally:
         # Limpar memória GPU para evitar vazamento
         try:
-            from .services import WhisperTranscriber
             WhisperTranscriber.clear_gpu_memory()
         except Exception as e:
             logger.warning(f"[Task {task_id}] Erro ao limpar GPU: {e}")
@@ -240,7 +239,6 @@ def transcribe_batch_async(
     finally:
         # Limpar memória GPU após batch
         try:
-            from .services import WhisperTranscriber
             WhisperTranscriber.clear_gpu_memory()
         except Exception as e:
             logger.warning(f"[Task {task_id}] Erro ao limpar GPU: {e}")
