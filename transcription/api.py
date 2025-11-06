@@ -212,9 +212,9 @@ def transcribe_audio(
     model = request.POST.get('model', None)
 
     try:
-        # Validar tamanho do arquivo
-        file_size_mb = len(file.read()) / (1024 * 1024)
-        file.seek(0)  # Resetar ponteiro
+        # Validar tamanho do arquivo ANTES de carregar na memória
+        # Usar file.size em vez de file.read() para evitar OutOfMemory
+        file_size_mb = file.size / (1024 * 1024)
 
         if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
             return TranscriptionResponse(
@@ -317,6 +317,20 @@ def transcribe_batch(
 
         temp_file_path = None
         try:
+            # Validar tamanho ANTES de carregar na memória
+            file_size_mb = file.size / (1024 * 1024)
+            if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
+                logger.warning(f"Arquivo {file.name} muito grande: {file_size_mb:.2f}MB")
+                results.append(TranscriptionResponse(
+                    success=False,
+                    transcription=None,
+                    processing_time=0,
+                    audio_info=None,
+                    error=f"Arquivo muito grande: {file_size_mb:.2f}MB (máximo: {settings.MAX_AUDIO_SIZE_MB}MB)"
+                ))
+                failed += 1
+                continue
+            
             # Salvar arquivo temporário
             file_extension = Path(file.name).suffix.lstrip('.').lower()
             temp_file_path = os.path.join(
@@ -436,9 +450,8 @@ def transcribe_audio_async_endpoint(
     model = request.POST.get('model', None)
     
     try:
-        # Validar tamanho
-        file_size_mb = len(file.read()) / (1024 * 1024)
-        file.seek(0)
+        # Validar tamanho ANTES de carregar na memória
+        file_size_mb = file.size / (1024 * 1024)
         
         if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
             return {

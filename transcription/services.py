@@ -8,6 +8,7 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Tuple, Optional, Dict
+from contextlib import contextmanager
 
 import whisper
 import torch
@@ -25,6 +26,34 @@ from .video_processor import VideoProcessor, MediaTypeDetector
 from .cache_manager import get_cache_manager
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def temporary_file(file_path: str):
+    """
+    Context manager para garantir limpeza de arquivos temporários
+    
+    Args:
+        file_path: Caminho do arquivo temporário
+        
+    Yields:
+        str: Caminho do arquivo
+        
+    Example:
+        with temporary_file("/tmp/audio.wav") as temp_path:
+            process(temp_path)
+        # Arquivo é automaticamente removido ao sair do contexto
+    """
+    try:
+        yield file_path
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.debug(f"Arquivo temporário removido: {file_path}")
+            except Exception as e:
+                logger.warning(f"Erro ao remover arquivo temporário {file_path}: {e}")
+
 
 
 class AudioProcessor:
@@ -555,10 +584,11 @@ class TranscriptionService:
                     f"video_extract_{int(time.time())}_{os.getpid()}.wav"
                 )
                 
+                # Usar timeout adaptativo baseado no tamanho do arquivo
                 success, result_msg = VideoProcessor.extract_audio(
                     file_path,
                     temp_wav_path,
-                    timeout=1800  # 30 minutos para vídeos grandes
+                    timeout=None  # None = usar timeout adaptativo
                 )
                 
                 if not success:
@@ -678,6 +708,9 @@ class TranscriptionService:
             )
 
         finally:
+            # Limpar memória GPU para evitar vazamento de memória
+            WhisperTranscriber.clear_gpu_memory()
+            
             # Limpar arquivo temporário
             if temp_wav_path and os.path.exists(temp_wav_path):
                 try:

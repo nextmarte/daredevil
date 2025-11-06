@@ -6,9 +6,10 @@ import logging
 import time
 from typing import Optional
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 
-from .services import TranscriptionService
+from .services import TranscriptionService, WhisperTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,12 @@ logger = logging.getLogger(__name__)
     name='transcription.transcribe_audio_async',
     time_limit=1800,  # 30 minutos
     soft_time_limit=1700,  # 28 minutos (aviso)
-    max_retries=2,
-    default_retry_delay=60  # 1 minuto entre retries
+    max_retries=3,  # Aumentado de 2 para 3
+    default_retry_delay=60,  # 1 minuto entre retries
+    autoretry_for=(ConnectionError, OSError),  # Auto-retry em erros de conexão Redis
+    retry_backoff=True,  # Backoff exponencial
+    retry_backoff_max=600,  # Máximo de 10 minutos
+    retry_jitter=True  # Adicionar jitter para evitar thundering herd
 )
 def transcribe_audio_async(
     self,
@@ -82,6 +87,16 @@ def transcribe_audio_async(
         
         return result_dict
         
+    except SoftTimeLimitExceeded:
+        # Timeout iminente - limpar e abortar graciosamente
+        logger.warning(f"[Task {task_id}] Soft time limit atingido, abortando...")
+        return {
+            "success": False,
+            "error": "Tempo limite de processamento atingido (soft timeout)",
+            "task_id": task_id,
+            "processing_time": round(time.time() - start_time, 2)
+        }
+        
     except Exception as e:
         logger.error(f"[Task {task_id}] Erro na transcrição: {e}", exc_info=True)
         
@@ -98,6 +113,12 @@ def transcribe_audio_async(
         }
     
     finally:
+        # Limpar memória GPU para evitar vazamento
+        try:
+            WhisperTranscriber.clear_gpu_memory()
+        except Exception as e:
+            logger.warning(f"[Task {task_id}] Erro ao limpar GPU: {e}")
+        
         # Limpar arquivo temporário se existir
         if file_path and os.path.exists(file_path):
             try:
@@ -113,7 +134,13 @@ def transcribe_audio_async(
     bind=True,
     name='transcription.transcribe_batch_async',
     time_limit=3600,  # 1 hora para batch
-    soft_time_limit=3400
+    soft_time_limit=3400,
+    max_retries=2,
+    default_retry_delay=120,  # 2 minutos entre retries para batch
+    autoretry_for=(ConnectionError, OSError),  # Auto-retry em erros de conexão Redis
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True
 )
 def transcribe_batch_async(
     self,
@@ -142,31 +169,47 @@ def transcribe_batch_async(
     successful = 0
     failed = 0
     
-    for idx, file_path in enumerate(file_paths, 1):
-        logger.info(f"[Task {task_id}] Processando arquivo {idx}/{len(file_paths)}")
-        
-        try:
-            result = TranscriptionService.process_audio_file(
-                file_path=file_path,
-                language=language,
-                model=model
-            )
+    try:
+        for idx, file_path in enumerate(file_paths, 1):
+            logger.info(f"[Task {task_id}] Processando arquivo {idx}/{len(file_paths)}")
             
-            results.append(result.dict())
-            
-            if result.success:
-                successful += 1
-            else:
-                failed += 1
+            try:
+                result = TranscriptionService.process_audio_file(
+                    file_path=file_path,
+                    language=language,
+                    model=model
+                )
                 
-        except Exception as e:
-            logger.error(f"[Task {task_id}] Erro no arquivo {file_path}: {e}")
-            results.append({
-                "success": False,
-                "error": str(e),
-                "file_path": file_path
-            })
-            failed += 1
+                results.append(result.dict())
+                
+                if result.success:
+                    successful += 1
+                else:
+                    failed += 1
+                    
+            except Exception as e:
+                logger.error(f"[Task {task_id}] Erro no arquivo {file_path}: {e}")
+                results.append({
+                    "success": False,
+                    "error": str(e),
+                    "file_path": file_path
+                })
+                failed += 1
+    
+    except SoftTimeLimitExceeded:
+        # Timeout iminente - retornar resultados parciais
+        logger.warning(f"[Task {task_id}] Soft time limit atingido em batch, retornando resultados parciais")
+        batch_result = {
+            "task_id": task_id,
+            "total_files": len(file_paths),
+            "successful": successful,
+            "failed": failed,
+            "results": results,
+            "total_processing_time": round(time.time() - start_time, 2),
+            "partial": True,
+            "error": "Timeout atingido, resultados parciais"
+        }
+        return batch_result
     
     total_time = time.time() - start_time
     
@@ -179,19 +222,27 @@ def transcribe_batch_async(
         "total_processing_time": round(total_time, 2)
     }
     
-    # Enviar webhook se fornecido
-    if webhook_url:
+    try:
+        # Enviar webhook se fornecido
+        if webhook_url:
+            try:
+                _send_webhook_notification(webhook_url, batch_result)
+            except Exception as e:
+                logger.error(f"[Task {task_id}] Erro ao enviar webhook: {e}")
+        
+        logger.info(
+            f"[Task {task_id}] Batch concluído: {successful} sucesso, "
+            f"{failed} falhas em {total_time:.2f}s"
+        )
+        
+        return batch_result
+    finally:
+        # Limpar memória GPU após batch
         try:
-            _send_webhook_notification(webhook_url, batch_result)
+            WhisperTranscriber.clear_gpu_memory()
         except Exception as e:
-            logger.error(f"[Task {task_id}] Erro ao enviar webhook: {e}")
-    
-    logger.info(
-        f"[Task {task_id}] Batch concluído: {successful} sucesso, "
-        f"{failed} falhas em {total_time:.2f}s"
-    )
-    
-    return batch_result
+            logger.warning(f"[Task {task_id}] Erro ao limpar GPU: {e}")
+
 
 
 def _send_webhook_notification(webhook_url: str, data: dict) -> None:
