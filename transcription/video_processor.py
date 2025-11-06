@@ -3,6 +3,7 @@ Processador de vídeos para extração de áudio
 Converte vários formatos de vídeo para áudio WAV otimizado para transcrição
 """
 import os
+import math
 import subprocess
 import logging
 from pathlib import Path
@@ -154,7 +155,6 @@ class VideoProcessor:
                 adaptive_timeout = int(file_size_mb * VideoProcessor.TIMEOUT_PER_MB)
             else:
                 # Logarítmica para arquivos grandes: base_timeout + log_factor
-                import math
                 base_timeout = 500  # Timeout para 500MB
                 log_factor = 100 * math.log10(file_size_mb / 500)  # Escala log
                 adaptive_timeout = int(base_timeout + log_factor)
