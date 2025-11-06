@@ -145,11 +145,24 @@ class VideoProcessor:
             logger.info(f"Extraindo áudio de vídeo: {video_path}")
             
             # ✅ Calcular timeout adaptativo baseado no tamanho do arquivo
-            # Regra: TIMEOUT_PER_MB segundos por MB (mínimo MIN_TIMEOUT_SECONDS, máximo MAX_TIMEOUT_SECONDS)
+            # Para arquivos pequenos/médios: linear (1s por MB)
+            # Para arquivos grandes (>500MB): escala logarítmica para evitar timeouts excessivos
             file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+            
+            if file_size_mb <= 500:
+                # Linear: 1 segundo por MB
+                adaptive_timeout = int(file_size_mb * VideoProcessor.TIMEOUT_PER_MB)
+            else:
+                # Logarítmica para arquivos grandes: base_timeout + log_factor
+                import math
+                base_timeout = 500  # Timeout para 500MB
+                log_factor = 100 * math.log10(file_size_mb / 500)  # Escala log
+                adaptive_timeout = int(base_timeout + log_factor)
+            
+            # Aplicar limites min/max
             adaptive_timeout = max(
                 VideoProcessor.MIN_TIMEOUT_SECONDS,
-                min(int(file_size_mb * VideoProcessor.TIMEOUT_PER_MB), VideoProcessor.MAX_TIMEOUT_SECONDS)
+                min(adaptive_timeout, VideoProcessor.MAX_TIMEOUT_SECONDS)
             )
             
             # Usar o maior entre timeout fornecido e timeout adaptativo

@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
     acks_late=True,  # Reconhece tarefa apenas após conclusão (permite retry se worker morrer)
     reject_on_worker_lost=True,  # Rejeita tarefa se worker morrer
     # Retry apenas em erros recuperáveis (não em todos)
-    autoretry_for=(ConnectionError, TimeoutError, IOError),  # Apenas erros de I/O/rede
+    autoretry_for=(
+        ConnectionError,  # Erros de conexão de rede
+        TimeoutError,  # Timeouts gerais
+        IOError,  # Erros de I/O
+        OSError,  # Erros de sistema (disco, permissões, etc)
+    ),
     retry_backoff=True,  # Backoff exponencial entre retries
     retry_backoff_max=600,  # Máximo de 10 minutos entre retries
     retry_jitter=True  # Adiciona jitter aleatório para evitar thundering herd
@@ -126,7 +131,12 @@ def transcribe_audio_async(
     acks_late=True,
     reject_on_worker_lost=True,
     max_retries=1,  # Menos retries para batch jobs
-    autoretry_for=(ConnectionError, TimeoutError, IOError),  # Apenas erros de I/O/rede
+    autoretry_for=(
+        ConnectionError,  # Erros de conexão de rede
+        TimeoutError,  # Timeouts gerais
+        IOError,  # Erros de I/O
+        OSError,  # Erros de sistema
+    ),
     retry_backoff=True,
     retry_backoff_max=600,
     retry_jitter=True
