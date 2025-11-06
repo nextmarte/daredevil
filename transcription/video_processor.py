@@ -21,12 +21,13 @@ class VideoProcessor:
     ]
 
     @staticmethod
-    def validate_video_file(file_path: str) -> Tuple[bool, Optional[str]]:
+    def validate_video_file(file_path: str, timeout: int = 10) -> Tuple[bool, Optional[str]]:
         """
-        Valida arquivo de vídeo
-
+        Valida arquivo de vídeo com timeout para evitar hang em arquivos corrompidos
+        
         Args:
             file_path: Caminho do arquivo de vídeo
+            timeout: Timeout em segundos (padrão: 10s)
 
         Returns:
             Tuple[bool, Optional[str]]: (is_valid, error_message)
@@ -38,7 +39,7 @@ class VideoProcessor:
         if extension not in VideoProcessor.SUPPORTED_VIDEO_FORMATS:
             return False, f"Formato de vídeo '{extension}' não suportado"
 
-        # Verificar se ffmpeg consegue ler o arquivo
+        # ✅ CRITICAL FIX: Validar com timeout para evitar hang em vídeos corrompidos
         try:
             result = subprocess.run(
                 ['ffprobe', '-v', 'error', '-select_streams', 'a:0',
@@ -46,7 +47,7 @@ class VideoProcessor:
                  file_path],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=timeout  # Timeout configurável
             )
             
             if result.returncode != 0:
@@ -60,7 +61,8 @@ class VideoProcessor:
         except FileNotFoundError:
             return False, "ffprobe não encontrado. Instale ffmpeg."
         except subprocess.TimeoutExpired:
-            return False, "Timeout ao validar arquivo de vídeo"
+            logger.error(f"Timeout ao validar vídeo ({timeout}s) - arquivo provavelmente corrompido")
+            return False, f"Timeout ao validar arquivo de vídeo ({timeout}s). Arquivo pode estar corrompido."
         except Exception as e:
             return False, f"Erro ao validar vídeo: {str(e)}"
 
@@ -121,18 +123,31 @@ class VideoProcessor:
     @staticmethod
     def extract_audio(video_path: str, output_path: str, timeout: int = 600) -> Tuple[bool, str]:
         """
-        Extrai áudio de arquivo de vídeo usando ffmpeg
+        Extrai áudio de arquivo de vídeo usando ffmpeg com timeout adaptativo
+        
+        ✅ CRITICAL FIX: Timeout adaptativo baseado no tamanho do arquivo
+        para evitar hang em vídeos corrompidos ou muito grandes
 
         Args:
             video_path: Caminho do arquivo de vídeo
             output_path: Caminho de saída para o arquivo WAV
-            timeout: Tempo máximo de execução em segundos (padrão 10 minutos)
+            timeout: Tempo máximo base em segundos (padrão 10 minutos)
 
         Returns:
             Tuple[bool, str]: (sucesso, mensagem_ou_caminho)
         """
         try:
             logger.info(f"Extraindo áudio de vídeo: {video_path}")
+            
+            # ✅ Calcular timeout adaptativo baseado no tamanho do arquivo
+            # Regra: 1 segundo de timeout por MB de arquivo (mínimo 60s, máximo 1800s)
+            file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+            adaptive_timeout = max(60, min(int(file_size_mb * 1.0), 1800))
+            
+            # Usar o maior entre timeout fornecido e timeout adaptativo
+            actual_timeout = max(timeout, adaptive_timeout)
+            
+            logger.info(f"Arquivo de vídeo: {file_size_mb:.2f}MB, timeout adaptativo: {actual_timeout}s")
             
             # Comando ffmpeg para extrair áudio
             # -i: arquivo de entrada
@@ -158,7 +173,7 @@ class VideoProcessor:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=actual_timeout  # Usar timeout adaptativo
             )
             
             if result.returncode == 0 and os.path.exists(output_path):
@@ -182,8 +197,8 @@ class VideoProcessor:
                 return False, error_msg
                 
         except subprocess.TimeoutExpired:
-            logger.error(f"Timeout ao processar vídeo (limite: {timeout}s)")
-            return False, f"Timeout ao processar vídeo (limite: {timeout}s)"
+            logger.error(f"Timeout ao processar vídeo (limite: {actual_timeout}s, tamanho: {file_size_mb:.2f}MB)")
+            return False, f"Timeout ao processar vídeo ({actual_timeout}s). Arquivo muito grande ou corrompido."
         except FileNotFoundError:
             logger.error("ffmpeg não encontrado. Instale ffmpeg no sistema.")
             return False, "ffmpeg não encontrado. Instale ffmpeg."

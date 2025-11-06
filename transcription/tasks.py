@@ -16,10 +16,17 @@ logger = logging.getLogger(__name__)
 @shared_task(
     bind=True,
     name='transcription.transcribe_audio_async',
-    time_limit=1800,  # 30 minutos
-    soft_time_limit=1700,  # 28 minutos (aviso)
+    time_limit=1800,  # 30 minutos (hard limit)
+    soft_time_limit=1700,  # 28 minutos (aviso antes do hard limit)
     max_retries=2,
-    default_retry_delay=60  # 1 minuto entre retries
+    default_retry_delay=60,  # 1 minuto entre retries
+    # ✅ CRITICAL FIX: Adicionar configurações para evitar deadlock
+    acks_late=True,  # Reconhece tarefa apenas após conclusão (permite retry se worker morrer)
+    reject_on_worker_lost=True,  # Rejeita tarefa se worker morrer
+    autoretry_for=(Exception,),  # Retry automático em exceções
+    retry_backoff=True,  # Backoff exponencial entre retries
+    retry_backoff_max=600,  # Máximo de 10 minutos entre retries
+    retry_jitter=True  # Adiciona jitter aleatório para evitar thundering herd
 )
 def transcribe_audio_async(
     self,
@@ -112,8 +119,16 @@ def transcribe_audio_async(
 @shared_task(
     bind=True,
     name='transcription.transcribe_batch_async',
-    time_limit=3600,  # 1 hora para batch
-    soft_time_limit=3400
+    time_limit=3600,  # 1 hora para batch (hard limit)
+    soft_time_limit=3400,  # 56 minutos (aviso)
+    # ✅ CRITICAL FIX: Adicionar configurações para evitar deadlock
+    acks_late=True,
+    reject_on_worker_lost=True,
+    max_retries=1,  # Menos retries para batch jobs
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True
 )
 def transcribe_batch_async(
     self,

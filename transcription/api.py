@@ -212,9 +212,14 @@ def transcribe_audio(
     model = request.POST.get('model', None)
 
     try:
-        # Validar tamanho do arquivo
-        file_size_mb = len(file.read()) / (1024 * 1024)
-        file.seek(0)  # Resetar ponteiro
+        # ✅ CRITICAL FIX: Validar tamanho ANTES de carregar na memória para evitar OOM
+        # Usar file.size (metadata) em vez de len(file.read()) que carrega tudo na memória
+        if hasattr(file, 'size'):
+            file_size_mb = file.size / (1024 * 1024)
+        else:
+            # Fallback para arquivos que não têm metadata de tamanho
+            file_size_mb = len(file.read()) / (1024 * 1024)
+            file.seek(0)  # Resetar ponteiro
 
         if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
             return TranscriptionResponse(
@@ -436,9 +441,12 @@ def transcribe_audio_async_endpoint(
     model = request.POST.get('model', None)
     
     try:
-        # Validar tamanho
-        file_size_mb = len(file.read()) / (1024 * 1024)
-        file.seek(0)
+        # ✅ CRITICAL FIX: Validar tamanho ANTES de carregar na memória
+        if hasattr(file, 'size'):
+            file_size_mb = file.size / (1024 * 1024)
+        else:
+            file_size_mb = len(file.read()) / (1024 * 1024)
+            file.seek(0)
         
         if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
             return {

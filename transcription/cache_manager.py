@@ -182,13 +182,100 @@ class TranscriptionCacheManager:
         # Tentar cache em memória primeiro
         cached_data = self.memory_cache.get(cache_key)
         if cached_data:
-            return cached_data
+            # ✅ CRITICAL FIX: Validar dados antes de retornar
+            if self._validate_cached_data(cached_data):
+                return cached_data
+            else:
+                logger.warning(f"Dados corrompidos no cache (memória): {cache_key[:16]}...")
+                # Remover dados corrompidos
+                self.memory_cache._remove(cache_key)
+                return None
         
         # Se habilitado, tentar cache em disco
         if self.enable_disk_cache:
-            return self._load_from_disk(cache_key)
+            disk_data = self._load_from_disk(cache_key)
+            # Validar dados do disco também
+            if disk_data and self._validate_cached_data(disk_data):
+                return disk_data
+            elif disk_data:
+                logger.warning(f"Dados corrompidos no cache (disco): {cache_key[:16]}...")
+                # Remover arquivo corrompido
+                try:
+                    cache_file = self.cache_dir / f"{cache_key}.json"
+                    if cache_file.exists():
+                        cache_file.unlink()
+                except Exception as e:
+                    logger.error(f"Erro ao remover cache corrompido: {e}")
+                return None
         
         return None
+    
+    def _validate_cached_data(self, data: Dict[str, Any]) -> bool:
+        """
+        Valida integridade dos dados do cache
+        
+        Args:
+            data: Dados a validar
+            
+        Returns:
+            True se dados são válidos, False caso contrário
+        """
+        # Verificar estrutura básica
+        if not isinstance(data, dict):
+            logger.warning("Cache data não é um dicionário")
+            return False
+        
+        # Verificar campos obrigatórios
+        required_fields = ['success', 'transcription', 'audio_info']
+        for field in required_fields:
+            if field not in data:
+                logger.warning(f"Campo obrigatório ausente no cache: {field}")
+                return False
+        
+        # Validar tipos
+        if not isinstance(data['success'], bool):
+            logger.warning("Campo 'success' com tipo inválido")
+            return False
+        
+        # Se success=True, deve ter transcription válida
+        if data['success']:
+            transcription = data.get('transcription')
+            if not transcription or not isinstance(transcription, dict):
+                logger.warning("Transcrição inválida no cache")
+                return False
+            
+            # Verificar campos da transcrição
+            trans_required = ['text', 'segments', 'language', 'duration']
+            for field in trans_required:
+                if field not in transcription:
+                    logger.warning(f"Campo ausente na transcrição: {field}")
+                    return False
+            
+            # Validar tipos da transcrição
+            if not isinstance(transcription['text'], str):
+                logger.warning("Texto da transcrição com tipo inválido")
+                return False
+            
+            if not isinstance(transcription['segments'], list):
+                logger.warning("Segmentos da transcrição com tipo inválido")
+                return False
+        
+        # Validar audio_info se presente
+        if data['audio_info']:
+            audio_info = data['audio_info']
+            if not isinstance(audio_info, dict):
+                logger.warning("audio_info com tipo inválido")
+                return False
+            
+            # Verificar campos do audio_info
+            audio_required = ['format', 'duration', 'sample_rate', 'channels']
+            for field in audio_required:
+                if field not in audio_info:
+                    logger.warning(f"Campo ausente em audio_info: {field}")
+                    return False
+        
+        # Tudo válido
+        return True
     
     def set(self, cache_key: str, transcription_data: Dict[str, Any]) -> None:
         """

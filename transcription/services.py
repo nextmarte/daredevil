@@ -8,6 +8,7 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Tuple, Optional, Dict
+from contextlib import contextmanager
 
 import whisper
 import torch
@@ -25,6 +26,30 @@ from .video_processor import VideoProcessor, MediaTypeDetector
 from .cache_manager import get_cache_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ✅ CRITICAL FIX: Context manager para garantir limpeza de arquivos temporários
+@contextmanager
+def temporary_file(file_path: Optional[str] = None):
+    """
+    Context manager para garantir limpeza de arquivos temporários
+    
+    Usage:
+        with temporary_file(temp_path) as path:
+            # Usar arquivo temporário
+            pass
+        # Arquivo é automaticamente removido aqui
+    """
+    try:
+        yield file_path
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.debug(f"Arquivo temporário removido: {file_path}")
+            except Exception as e:
+                logger.warning(f"Erro ao remover arquivo temporário: {e}")
+
 
 
 class AudioProcessor:
@@ -389,18 +414,23 @@ class WhisperTranscriber:
             transcription_time = time.time() - start_time
             logger.info(f"Transcrição concluída em {transcription_time:.2f}s")
             
-            # Limpar memória GPU após transcrição
-            if "cuda" in device:
-                memory_after = cls.check_gpu_memory()
-                logger.debug(f"Memória GPU após transcrição: {memory_after}")
-                cls.clear_gpu_memory()
-
-            return TranscriptionResult(
+            # Criar resultado antes de limpar memória
+            result = TranscriptionResult(
                 text=full_text,
                 segments=segments,
                 language=result.get('language', language),
                 duration=result.get('duration', 0)
             )
+            
+            # ✅ CRITICAL FIX: Limpar memória GPU após cada transcrição para evitar OOM
+            if "cuda" in device:
+                memory_after = cls.check_gpu_memory()
+                logger.debug(f"Memória GPU após transcrição: {memory_after}")
+                cls.clear_gpu_memory()
+                memory_final = cls.check_gpu_memory()
+                logger.info(f"Memória GPU após limpeza: {memory_final.get('free_gb', 0):.2f}GB livres")
+            
+            return result
 
         except RuntimeError as e:
             error_str = str(e)
@@ -678,11 +708,19 @@ class TranscriptionService:
             )
 
         finally:
-            # Limpar arquivo temporário
+            # ✅ CRITICAL FIX: Garantir limpeza de arquivos temporários mesmo em caso de erro
             if temp_wav_path and os.path.exists(temp_wav_path):
                 try:
                     os.remove(temp_wav_path)
-                    logger.info(
-                        f"Arquivo temporário removido: {temp_wav_path}")
+                    logger.info(f"Arquivo temporário removido: {temp_wav_path}")
                 except Exception as e:
-                    logger.warning(f"Erro ao remover arquivo temporário: {e}")
+                    logger.error(f"CRÍTICO: Falha ao remover arquivo temporário {temp_wav_path}: {e}")
+                    # Tentar forçar remoção mesmo que dê erro
+                    try:
+                        os.chmod(temp_wav_path, 0o777)  # Dar permissões totais
+                        os.remove(temp_wav_path)
+                        logger.info(f"Arquivo temporário removido após alterar permissões")
+                    except Exception as e2:
+                        logger.error(f"CRÍTICO: Impossível remover arquivo temporário: {e2}")
+                        # Em último caso, adicionar à lista para limpeza posterior
+                        # (seria necessário implementar um cleanup job separado)
