@@ -10,6 +10,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 
 from .services import TranscriptionService, WhisperTranscriber
+from .memory_manager import MemoryManager  # ✅ NOVO: Proteção de memória
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 @shared_task(
     bind=True,
     name='transcription.transcribe_audio_async',
+    queue='gpu',  # ✅ NOVO: Rotear para GPU worker
     time_limit=1800,  # 30 minutos
     soft_time_limit=1700,  # 28 minutos (aviso)
     max_retries=3,  # Aumentado de 2 para 3
@@ -52,6 +54,8 @@ def transcribe_audio_async(
     
     start_time = time.time()
     
+    file_removed = False  # Flag para rastrear se arquivo foi removido
+    
     try:
         # Verificar se arquivo existe
         if not os.path.exists(file_path):
@@ -62,10 +66,14 @@ def transcribe_audio_async(
                 "task_id": task_id
             }
         
+        logger.debug(f"[Task {task_id}] Arquivo confirmado: {file_path} ({os.path.getsize(file_path)} bytes)")
+        
         # Processar transcrição
+        # Garantir que language seja string
+        lang = language if language else "pt"
         result = TranscriptionService.process_audio_file(
             file_path=file_path,
-            language=language,
+            language=lang,
             model=model,
             use_cache=use_cache
         )
@@ -100,10 +108,19 @@ def transcribe_audio_async(
     except Exception as e:
         logger.error(f"[Task {task_id}] Erro na transcrição: {e}", exc_info=True)
         
-        # Tentar retry se não foi timeout
+        # Tentar retry se não foi timeout e arquivo ainda existe
         if "timeout" not in str(e).lower() and self.request.retries < self.max_retries:
-            logger.info(f"[Task {task_id}] Tentando novamente em 60 segundos...")
-            raise self.retry(exc=e)
+            if os.path.exists(file_path):
+                logger.info(f"[Task {task_id}] Tentando novamente em 60 segundos...")
+                raise self.retry(exc=e)
+            else:
+                logger.error(f"[Task {task_id}] Arquivo foi removido, não pode fazer retry!")
+                return {
+                    "success": False,
+                    "error": f"Arquivo foi removido antes do retry: {file_path}",
+                    "task_id": task_id,
+                    "processing_time": round(time.time() - start_time, 2)
+                }
         
         return {
             "success": False,
@@ -119,13 +136,17 @@ def transcribe_audio_async(
         except Exception as e:
             logger.warning(f"[Task {task_id}] Erro ao limpar GPU: {e}")
         
-        # Limpar arquivo temporário se existir
-        if file_path and os.path.exists(file_path):
+        # ✅ CORREÇÃO: Remover arquivo temporário APENAS APÓS processamento bem-sucedido
+        # Manter arquivo por um tempo se houve erro (para possíveis debugs/retries)
+        if file_path and os.path.exists(file_path) and not file_removed:
             try:
-                # Apenas remover se for arquivo temporário
-                if "upload_" in file_path or "temp_" in file_path:
+                # Apenas remover se for arquivo de upload assíncrono
+                if "upload_async_" in file_path or "upload_" in file_path or "temp_" in file_path:
                     os.remove(file_path)
+                    file_removed = True
                     logger.info(f"[Task {task_id}] Arquivo temporário removido: {file_path}")
+                else:
+                    logger.debug(f"[Task {task_id}] Arquivo não será removido (não é temporário): {file_path}")
             except Exception as e:
                 logger.warning(f"[Task {task_id}] Erro ao remover arquivo: {e}")
 
@@ -174,9 +195,11 @@ def transcribe_batch_async(
             logger.info(f"[Task {task_id}] Processando arquivo {idx}/{len(file_paths)}")
             
             try:
+                # Garantir que language seja string
+                lang = language if language else "pt"
                 result = TranscriptionService.process_audio_file(
                     file_path=file_path,
-                    language=language,
+                    language=lang,
                     model=model
                 )
                 
@@ -267,3 +290,138 @@ def _send_webhook_notification(webhook_url: str, data: dict) -> None:
     except Exception as e:
         logger.error(f"Erro ao enviar webhook para {webhook_url}: {e}")
         raise
+
+
+# ========== TASKS DE PROTEÇÃO CONTRA TRAVAMENTO ==========
+# ✅ NOVAS TASKS: Limpeza automática de recursos
+
+
+@shared_task(
+    name='transcription.cleanup_temp_files_task',
+    bind=True,
+    time_limit=600,  # 10 minutos
+)
+def cleanup_temp_files_task(self):
+    """
+    ✅ PROTEÇÃO: Task agendada para limpar arquivos temporários antigos
+    
+    Executa a cada 30 minutos (configurável em Celery Beat).
+    Remove arquivos com idade > 6 horas para liberar espaço em disco.
+    
+    ⚠️ IMPORTANTE: Aumentado de 1h para 6h para evitar deletar arquivos
+    que ainda estão sendo processados por tasks assíncronas na fila.
+    
+    Retorna:
+        Dict com número de arquivos removidos e status
+    """
+    task_id = self.request.id
+    logger.info(f"[Task {task_id}] Iniciando limpeza de arquivos temporários...")
+    
+    try:
+        # Remover arquivos com idade > 6 horas (aumentado de 1h)
+        deleted = MemoryManager.cleanup_old_temp_files(max_age_hours=6)
+        
+        # Forçar limpeza agressiva se disco > 85%
+        MemoryManager.force_cleanup_if_needed()
+        
+        # Obter status de memória
+        usage = MemoryManager.get_memory_usage()
+        
+        result = {
+            "success": True,
+            "deleted_files": deleted,
+            "disk_usage_percent": usage.get("disk_percent", 0),
+            "ram_usage_percent": usage.get("ram_percent", 0),
+            "temp_dir_size_mb": MemoryManager.get_temp_dir_size_mb(),
+        }
+        
+        logger.info(f"[Task {task_id}] Limpeza concluída: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"[Task {task_id}] Erro ao limpar temporários: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@shared_task(
+    name='transcription.monitor_memory_task',
+    bind=True,
+    time_limit=300,  # 5 minutos
+)
+def monitor_memory_task(self):
+    """
+    ✅ PROTEÇÃO: Task agendada para monitorar uso de memória
+    
+    Executa a cada 5 minutos (configurável em Celery Beat).
+    Alerta se memória/disco atingir níveis críticos.
+    
+    Retorna:
+        Dict com status de memória
+    """
+    task_id = self.request.id
+    
+    try:
+        usage = MemoryManager.get_memory_usage()
+        status = MemoryManager.get_status()
+        
+        # Log conforme o nível
+        if status["is_critical"]:
+            logger.critical(f"🔴 [Task {task_id}] ALERTA CRÍTICO DE MEMÓRIA: {usage}")
+        elif status["is_warning"]:
+            logger.warning(f"⚠️  [Task {task_id}] AVISO DE MEMÓRIA: {usage}")
+        else:
+            logger.debug(f"[Task {task_id}] Status normal: RAM={usage.get('ram_percent', 0)}% Disco={usage.get('disk_percent', 0)}%")
+        
+        return {
+            "success": True,
+            "is_critical": status["is_critical"],
+            "is_warning": status["is_warning"],
+            "memory_usage": usage
+        }
+        
+    except Exception as e:
+        logger.error(f"[Task {task_id}] Erro ao monitorar memória: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@shared_task(
+    name='transcription.unload_gpu_model_task',
+    bind=True,
+    time_limit=60,  # 1 minuto
+)
+def unload_gpu_model_task(self):
+    """
+    ✅ PROTEÇÃO: Task agendada para descarregar modelo de GPU periodicamente
+    
+    Executa a cada 1 hora (configurável em Celery Beat).
+    Descarrega modelo de GPU se não estiver em uso para liberar memória.
+    
+    Retorna:
+        Dict com status
+    """
+    task_id = self.request.id
+    
+    try:
+        # Descarregar modelo se estiver em GPU
+        WhisperTranscriber.unload_model()
+        
+        logger.info(f"[Task {task_id}] Modelo de GPU descarregado com sucesso")
+        
+        return {
+            "success": True,
+            "message": "Modelo de GPU descarregado"
+        }
+        
+    except Exception as e:
+        logger.error(f"[Task {task_id}] Erro ao descarregar modelo: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+

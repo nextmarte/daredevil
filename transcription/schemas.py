@@ -33,6 +33,19 @@ class TranscriptionResult(BaseModel):
     duration: float = Field(..., description="Duração total do áudio em segundos")
 
 
+class TimingMetrics(BaseModel):
+    """Métricas detalhadas de tempo de processamento"""
+    conversion_time: Optional[float] = Field(
+        None, description="Tempo gasto em conversão remota de formato (segundos)")
+    model_load_time: Optional[float] = Field(
+        None, description="Tempo para carregar o modelo Whisper (segundos)")
+    transcription_time: Optional[float] = Field(
+        None, description="Tempo gasto na transcrição (segundos)")
+    post_processing_time: Optional[float] = Field(
+        None, description="Tempo gasto no pós-processamento de português (segundos)")
+    total_time: float = Field(..., description="Tempo total de processamento (segundos)")
+
+
 class TranscriptionResponse(BaseModel):
     """Resposta completa da API de transcrição"""
     success: bool = Field(..., description="Indica se a transcrição foi bem-sucedida")
@@ -41,6 +54,10 @@ class TranscriptionResponse(BaseModel):
         description="Resultado da transcrição se bem-sucedida"
     )
     processing_time: float = Field(..., description="Tempo de processamento em segundos")
+    timing_metrics: Optional[TimingMetrics] = Field(
+        None,
+        description="Métricas detalhadas de tempo de cada fase de processamento"
+    )
     audio_info: Optional[AudioInfo] = Field(
         None,
         description="Informações sobre o áudio processado"

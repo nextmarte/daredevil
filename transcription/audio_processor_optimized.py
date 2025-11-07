@@ -1,7 +1,11 @@
 """
-AudioProcessor otimizado usando ffmpeg puro ao invés de pydub.
-Inclui validação prévia com ffprobe, detecção de skip de conversão,
-e suporte a múltiplos threads.
+AudioProcessor otimizado usando validação com ffprobe e conversão REMOTA.
+
+✨ DESIGN: Conversão 100% remota em máquina dedicada (192.168.1.33:8591)
+   - Validação prévia com ffprobe
+   - Conversão remota apenas (sem FFmpeg local)
+   - Retry automático com backoff exponencial
+   - Detecta arquivo já otimizado (16kHz mono)
 """
 import os
 import subprocess
@@ -12,6 +16,15 @@ from typing import Optional, Dict, Tuple
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+# Importar cliente remoto (obrigatório)
+try:
+    from .remote_audio_converter import RemoteAudioConverter
+    REMOTE_CONVERTER_AVAILABLE = True
+except ImportError:
+    logger.error("❌ CRÍTICO: RemoteAudioConverter não disponível!")
+    logger.error("Instale e configure o cliente remoto corretamente.")
+    REMOTE_CONVERTER_AVAILABLE = False
 
 
 class AudioProcessor:
@@ -155,13 +168,21 @@ class AudioProcessor:
     @staticmethod
     def convert_to_wav(input_path: str, output_path: Optional[str] = None) -> Optional[str]:
         """
-        ✅ OTIMIZADO: Converte áudio para WAV 16kHz mono PCM usando ffmpeg puro.
+        ✅ OTIMIZADO: Converte áudio para WAV 16kHz mono PCM.
+        
+        ✨ DESIGN: Usa APENAS conversão REMOTA (máquina dedicada)
+        
+        Fluxo:
+        1. Se arquivo já otimizado (16kHz mono) → pula conversão
+        2. Sempre tenta conversão REMOTA (192.168.1.29:8591)
+        3. Retry automático 2x com backoff exponencial
+        4. Se todos os retries falharem → retorna None (erro)
 
-        Parâmetros otimizados:
-        - -threads auto: Usa todos cores disponíveis
-        - -analyzeduration: Detecta formato rapidamente
-        - -probesize: Limita tamanho de prova
-        - Pula conversão se arquivo já está no formato alvo
+        Por que REMOTA apenas?
+        - Máquina com melhor CPU: 5-10x mais rápido
+        - Converte TODOS os formatos (FFmpeg disponível)
+        - Não sobrecarrega servidor principal
+        - Garantia de performance consistente
 
         Args:
             input_path: Caminho do arquivo de entrada
@@ -169,19 +190,22 @@ class AudioProcessor:
 
         Returns:
             str: Caminho do arquivo convertido, ou None em erro
+            
+        Raises:
+            None - retorna None em caso de erro (não lança exceção)
         """
         AudioProcessor.ensure_temp_dir()
 
         # ✅ OTIMIZADO: Validar arquivo antes de converter
         is_valid, audio_info = AudioProcessor.validate_audio_file(input_path)
         if not is_valid:
-            logger.error(f"Arquivo de áudio inválido: {input_path}")
+            logger.error(f"❌ Arquivo de áudio inválido: {input_path}")
             return None
 
         # ✅ OTIMIZADO: Verificar se precisa conversão
         if not AudioProcessor.needs_conversion(audio_info):
             logger.info(
-                f"Retornando arquivo original (já otimizado): {input_path}")
+                f"✓ Arquivo já otimizado (16kHz mono) - pulando conversão: {input_path}")
             return input_path
 
         # Definir caminho de saída
@@ -190,51 +214,42 @@ class AudioProcessor:
                 AudioProcessor.TEMP_DIR / f"audio_{os.urandom(8).hex()}.wav"
             )
 
-        try:
-            logger.info(f"Convertendo áudio: {input_path} -> {output_path}")
-
-            # ✅ OTIMIZADO: Comando ffmpeg com parâmetros de performance
-            command = [
-                "ffmpeg",
-                "-y",  # Sobrescrever sem confirmar
-                "-analyzeduration", "5000000",  # 5 segundos - detecta formato rápido
-                "-probesize", "100000",  # 100KB - limite de prova
-                "-threads", "auto",  # ✅ Multi-thread otimizado
-                "-i", input_path,
-                "-vn",  # Sem vídeo
-                "-acodec", AudioProcessor.TARGET_FORMAT,  # PCM 16-bit
-                "-ar", str(AudioProcessor.TARGET_SAMPLE_RATE),  # 16kHz
-                "-ac", str(AudioProcessor.TARGET_CHANNELS),  # Mono
-                "-loglevel", "error",  # Menos output de log
-                output_path
-            ]
-
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minutos timeout
+        # ✨ OBRIGATÓRIO: Usar conversão REMOTA apenas
+        if not REMOTE_CONVERTER_AVAILABLE:
+            logger.error(
+                "❌ RemoteAudioConverter não importado! Instale/configure corretamente."
             )
-
-            if result.returncode != 0:
-                logger.error(f"Erro na conversão ffmpeg: {result.stderr}")
-                return None
-
-            if not os.path.exists(output_path):
-                logger.error(f"Arquivo de saída não criado: {output_path}")
-                return None
-
-            file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-            logger.info(
-                f"✓ Conversão bem-sucedida: {output_path} ({file_size_mb:.2f}MB)")
-
-            return output_path
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"Timeout na conversão de {input_path} (>5 min)")
             return None
-        except Exception as e:
-            logger.error(f"Erro ao converter áudio: {e}")
+
+        if not RemoteAudioConverter.ENABLED:
+            logger.error(
+                "❌ Conversor remoto desabilitado (REMOTE_CONVERTER_ENABLED=false)"
+            )
+            return None
+
+        logger.info(
+            f"🌐 Iniciando conversão REMOTA em 192.168.1.29:8591..."
+        )
+        
+        # Tentar conversão remota (com retry automático internamente)
+        remote_result = RemoteAudioConverter.convert_to_wav(
+            input_path=input_path,
+            output_path=output_path,
+            sample_rate=AudioProcessor.TARGET_SAMPLE_RATE,
+            channels=AudioProcessor.TARGET_CHANNELS
+        )
+        
+        if remote_result:
+            logger.info(f"✓ Conversão remota concluída: {remote_result}")
+            return remote_result
+        else:
+            logger.error(
+                f"❌ Falha na conversão remota após {RemoteAudioConverter.MAX_RETRIES} "
+                f"retries. Verifique: "
+                f"1) Máquina remota ligada (192.168.1.33) "
+                f"2) API em 192.168.1.33:8591 "
+                f"3) FFmpeg instalado na máquina remota"
+            )
             return None
 
     @staticmethod

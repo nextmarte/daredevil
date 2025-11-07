@@ -21,6 +21,7 @@ from .schemas import (
 )
 from .services import TranscriptionService, WhisperTranscriber
 from .cache_manager import get_cache_manager
+from .memory_manager import MemoryManager  # ✅ NOVO: Proteção de memória
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,48 @@ def gpu_status(request: HttpRequest):
         })
     
     return gpu_info
+
+
+@api.get("/memory-status", tags=["Health"])
+def memory_status(request: HttpRequest):
+    """
+    Retorna o status de memória e disco do servidor
+    
+    ✅ PROTEÇÃO: Permite monitorar recursos e detectar travamentos potenciais.
+    
+    Retorna informações sobre:
+    - RAM (percentual de uso, disponível, total)
+    - Disco (percentual de uso, livre, total)
+    - Tamanho de arquivos temporários
+    - Status crítico/aviso
+    """
+    return MemoryManager.get_status()
+
+
+@api.post("/cleanup-temp", tags=["Health"])
+def cleanup_temp_files(request: HttpRequest):
+    """
+    Limpa arquivos temporários antigos
+    
+    ✅ PROTEÇÃO: Remove arquivos com mais de 1 hora para liberar espaço em disco.
+    
+    Retorna número de arquivos removidos e espaço liberado.
+    """
+    try:
+        deleted = MemoryManager.cleanup_old_temp_files(max_age_hours=1)
+        usage = MemoryManager.get_memory_usage()
+        return {
+            "success": True,
+            "deleted_files": deleted,
+            "message": f"{deleted} arquivos temporários removidos",
+            "disk_usage_percent": usage.get("disk_percent", 0)
+        }
+    except Exception as e:
+        logger.error(f"Erro ao limpar temporários: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 @api.get("/cache-stats", tags=["Health"])
@@ -212,9 +255,32 @@ def transcribe_audio(
     model = request.POST.get('model', None)
 
     try:
+        # ✅ PROTEÇÃO 1: Verificar se memória está crítica
+        if MemoryManager.check_memory_critical():
+            logger.warning("🔴 Requisição rejeitada: Servidor com memória/disco crítico")
+            return TranscriptionResponse(
+                success=False,
+                transcription=None,
+                processing_time=time.time() - start_time,
+                audio_info=None,
+                error="Servidor com memória/disco crítico. Tente novamente mais tarde."
+            )
+        
         # Validar tamanho do arquivo ANTES de carregar na memória
         # Usar file.size em vez de file.read() para evitar OutOfMemory
         file_size_mb = file.size / (1024 * 1024)
+
+        # ✅ PROTEÇÃO 2: Verificar se deve rejeitar upload por espaço/memória
+        should_reject, reject_reason = MemoryManager.should_reject_upload(file_size_mb)
+        if should_reject:
+            logger.warning(f"⚠️  Upload rejeitado: {reject_reason}")
+            return TranscriptionResponse(
+                success=False,
+                transcription=None,
+                processing_time=time.time() - start_time,
+                audio_info=None,
+                error=reject_reason or "Não há recursos disponíveis. Tente novamente mais tarde."
+            )
 
         if file_size_mb > settings.MAX_AUDIO_SIZE_MB:
             return TranscriptionResponse(
@@ -418,28 +484,94 @@ def transcribe_audio_async_endpoint(
     webhook_url: Optional[str] = Form(None)
 ):
     """
-    Transcreve arquivo de áudio/vídeo de forma assíncrona
+    Transcreve arquivo de áudio/vídeo de forma assíncrona (Polling ou Webhook)
     
-    ### Parâmetros:
-    - **file**: Arquivo de áudio ou vídeo
-    - **language**: Código do idioma (padrão: pt)
-    - **model**: Modelo Whisper (opcional)
-    - **webhook_url**: URL para notificação quando concluir (opcional)
+    ✅ **Suporta 2 modos de notificação:**
+    1. **Polling**: Consulte o status via GET `/api/transcribe/async/status/{task_id}`
+    2. **Webhook**: Forneça `webhook_url` para receber POST automático quando concluir
     
-    ### Retorna:
-    - **task_id**: ID da tarefa para consultar o status
-    - **status_url**: URL para verificar status da tarefa
+    ### Parâmetros (form-data):
     
-    ### Como usar:
-    1. Faça upload do arquivo com este endpoint
-    2. Guarde o `task_id` retornado
-    3. Consulte o status em `/transcribe/async/status/{task_id}`
-    4. Ou forneça `webhook_url` para ser notificado automaticamente
+    | Parâmetro | Tipo | Obrigatório | Descrição |
+    |-----------|------|------------|-----------|
+    | **file** | File | ✅ Sim | Arquivo de áudio ou vídeo (até 500MB) |
+    | **language** | String | ❌ Não | Código do idioma (padrão: `pt` para português) |
+    | **model** | String | ❌ Não | Modelo Whisper: `tiny`, `base`, `small`, `medium`, `large` |
+    | **webhook_url** | String | ❌ Não | URL para receber POST com resultado (opcional) |
+    
+    ### Formatos de Áudio Suportados:
+    .opus, .ogg, .m4a, .aac, .mp4, .mp3, .wav, .flac, .webm
+    
+    ### Formatos de Vídeo Suportados:
+    .mp4, .avi, .mov, .mkv, .flv, .wmv, .webm, .ogv, .ts, .mts, .m2ts, .3gp, .f4v, .asf
+    
+    ### Retorna (200 OK):
+    ```json
+    {
+      "success": true,
+      "task_id": "abc123def456",
+      "status_url": "/api/transcribe/async/status/abc123def456",
+      "message": "Transcrição iniciada. Use task_id para consultar o status.",
+      "submission_time": 0.25
+    }
+    ```
+    
+    ### Modo 1: POLLING (sem webhook)
+    
+    **Passo 1:** Upload do arquivo
+    ```bash
+    curl -X POST http://localhost:8000/api/transcribe/async \\
+      -F "file=@audio.mp3" \\
+      -F "language=pt"
+    # Retorna: {"task_id": "abc123", "status_url": "/api/transcribe/async/status/abc123"}
+    ```
+    
+    **Passo 2:** Consulte o status periodicamente
+    ```bash
+    curl http://localhost:8000/api/transcribe/async/status/abc123
+    # Retorna: {"state": "STARTED", "message": "Transcrição em andamento"}
+    # Retorna: {"state": "SUCCESS", "result": {...}}
+    ```
+    
+    ### Modo 2: WEBHOOK (notificação automática)
+    
+    **Passo 1:** Upload com webhook_url
+    ```bash
+    curl -X POST http://localhost:8000/api/transcribe/async \\
+      -F "file=@audio.mp3" \\
+      -F "language=pt" \\
+      -F "webhook_url=https://seu-servidor.com/webhook"
+    # Retorna: {"task_id": "abc123", ...}
+    ```
+    
+    **Passo 2:** Sua API receberá POST quando concluir
+    ```json
+    POST https://seu-servidor.com/webhook
+    {
+      "task_id": "abc123",
+      "success": true,
+      "result": {
+        "text": "transcrição aqui",
+        "segments": [...],
+        ...
+      }
+    }
+    ```
+    
+    ### Estados da Tarefa:
+    - **PENDING**: Aguardando na fila de processamento
+    - **STARTED**: Processamento iniciado
+    - **SUCCESS**: Concluída com sucesso ✅
+    - **FAILURE**: Falhou ❌
+    - **RETRY**: Tentando novamente após erro
     
     ### Vantagens:
-    - Não bloqueia a requisição (ideal para arquivos grandes)
-    - Suporta webhook para notificação automática
-    - Processamento em fila com retry automático
+    - ⚡ Não bloqueia a requisição (retorna imediatamente)
+    - 🔄 Ideal para arquivos grandes (> 100MB)
+    - 🌐 Suporta polling para ambientes com firewall restritivo
+    - 📝 Suporta webhook para aplicações real-time
+    - 🔁 Retry automático em caso de falha
+    - ✅ Processamento em fila (não sobrecarrega servidor)
     """
     from .tasks import transcribe_audio_async
     
@@ -513,22 +645,145 @@ def transcribe_audio_async_endpoint(
 @api.get("/transcribe/async/status/{task_id}", tags=["Async Transcription"])
 def get_async_task_status(request: HttpRequest, task_id: str):
     """
-    Consulta o status de uma tarefa de transcrição assíncrona
+    ✅ Consulta o status de uma tarefa de transcrição assíncrona (POLLING)
+    
+    **Use este endpoint para polling ao invés de webhook**
     
     ### Parâmetros:
-    - **task_id**: ID da tarefa retornado pelo endpoint /transcribe/async
+    - **task_id** (path): ID da tarefa retornado pelo endpoint POST `/api/transcribe/async`
     
-    ### Retorna:
-    - **state**: Estado da tarefa (PENDING, STARTED, SUCCESS, FAILURE, RETRY)
-    - **result**: Resultado da transcrição (se concluída)
-    - **progress**: Informações de progresso
+    ### Retorna (200 OK):
     
-    ### Estados possíveis:
-    - **PENDING**: Aguardando processamento
-    - **STARTED**: Processamento iniciado
-    - **SUCCESS**: Concluída com sucesso
-    - **FAILURE**: Falhou
-    - **RETRY**: Tentando novamente após erro
+    #### Enquanto processando:
+    ```json
+    {
+      "task_id": "abc123def456",
+      "state": "STARTED",
+      "message": "Transcrição em andamento"
+    }
+    ```
+    
+    #### Quando concluído com sucesso:
+    ```json
+    {
+      "task_id": "abc123def456",
+      "state": "SUCCESS",
+      "result": {
+        "success": true,
+        "transcription": {
+          "text": "texto completo da transcrição",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 2.5,
+              "text": "primeira parte"
+            }
+          ],
+          "language": "pt",
+          "duration": 45.5
+        },
+        "audio_info": {
+          "format": "mp3",
+          "duration": 45.5,
+          "sample_rate": 16000
+        },
+        "processing_time": 12.3
+      },
+      "message": "Transcrição concluída"
+    }
+    ```
+    
+    #### Quando falha:
+    ```json
+    {
+      "task_id": "abc123def456",
+      "state": "FAILURE",
+      "error": "Motivo do erro",
+      "message": "Transcrição falhou"
+    }
+    ```
+    
+    ### Estados Possíveis:
+    
+    | Estado | Descrição | Ação |
+    |--------|-----------|------|
+    | **PENDING** | Aguardando na fila | Aguarde... |
+    | **STARTED** | Processamento iniciado | Aguarde... |
+    | **SUCCESS** | ✅ Concluído com sucesso | Use `result` |
+    | **FAILURE** | ❌ Falhou | Verifique `error` |
+    | **RETRY** | Tentando novamente | Aguarde... |
+    
+    ### Exemplo de Polling:
+    
+    ```python
+    import requests
+    import time
+    
+    # 1. Fazer upload
+    response = requests.post(
+        'http://localhost:8000/api/transcribe/async',
+        files={'file': open('audio.mp3', 'rb')},
+        data={'language': 'pt'}
+    )
+    task_id = response.json()['task_id']
+    print(f"Task iniciada: {task_id}")
+    
+    # 2. Polling até concluir
+    while True:
+        status = requests.get(
+            f'http://localhost:8000/api/transcribe/async/status/{task_id}'
+        ).json()
+        
+        print(f"Estado: {status['state']}")
+        
+        if status['state'] == 'SUCCESS':
+            print(f"Transcrição: {status['result']['transcription']['text']}")
+            break
+        elif status['state'] == 'FAILURE':
+            print(f"Erro: {status['error']}")
+            break
+        else:
+            time.sleep(2)  # Aguardar 2 segundos antes de perguntar novamente
+    ```
+    
+    ### Estratégias de Polling:
+    
+    **1. Polling Simples (a cada 2 segundos)**
+    ```bash
+    while true; do
+      curl http://localhost:8000/api/transcribe/async/status/abc123
+      sleep 2
+    done
+    ```
+    
+    **2. Polling Exponencial (aumenta intervalo com tempo)**
+    ```bash
+    for i in 1 2 3 4 5; do
+      curl http://localhost:8000/api/transcribe/async/status/abc123
+      sleep $((i * 2))  # 2s, 4s, 6s, 8s, 10s
+    done
+    ```
+    
+    **3. Polling com Limite (máximo 10 min)**
+    ```bash
+    start=$(date +%s)
+    timeout=600
+    while true; do
+      elapsed=$(($(date +%s) - start))
+      if [ $elapsed -gt $timeout ]; then
+        echo "Timeout!"
+        break
+      fi
+      curl http://localhost:8000/api/transcribe/async/status/abc123
+      sleep 3
+    done
+    ```
+    
+    ### ⚠️ Recomendações:
+    - Não consulte mais que **1 vez a cada segundo** (respeite o servidor!)
+    - Use intervalo de **2-5 segundos** para melhor balanço
+    - Implemente **timeout máximo** (ex: 30 minutos)
+    - Para arquivos grandes (> 500MB), use intervalo maior (10-30s)
     """
     from celery.result import AsyncResult
     
@@ -560,18 +815,45 @@ def get_async_task_status(request: HttpRequest, task_id: str):
 @api.delete("/transcribe/async/{task_id}", tags=["Async Transcription"])
 def cancel_async_task(request: HttpRequest, task_id: str):
     """
-    Cancela uma tarefa de transcrição assíncrona
+    ❌ Cancela uma tarefa de transcrição assíncrona em andamento
     
     ### Parâmetros:
-    - **task_id**: ID da tarefa a cancelar
+    - **task_id** (path): ID da tarefa a cancelar
     
-    ### Retorna:
-    - **success**: Se o cancelamento foi bem-sucedido
-    - **message**: Mensagem de status
+    ### Retorna (200 OK):
     
-    ### Nota:
-    - Tarefas já em processamento podem não ser interrompidas imediatamente
-    - Tarefas concluídas não podem ser canceladas
+    #### Cancelada com sucesso:
+    ```json
+    {
+      "success": true,
+      "message": "Tarefa cancelada",
+      "task_id": "abc123def456"
+    }
+    ```
+    
+    #### Não pode ser cancelada:
+    ```json
+    {
+      "success": false,
+      "message": "Tarefa já concluída com estado: SUCCESS",
+      "state": "SUCCESS"
+    }
+    ```
+    
+    ### Nota Importante:
+    ⚠️ **Limitações do cancelamento:**
+    - Tarefas **em processamento** podem não ser interrompidas imediatamente
+    - Tarefas já **concluídas** não podem ser canceladas
+    - Tarefas na **fila** serão canceladas imediatamente
+    
+    ### Exemplo:
+    ```bash
+    # Cancelar transcrição
+    curl -X DELETE http://localhost:8000/api/transcribe/async/abc123
+    
+    # Resultado possível:
+    # {"success": true, "message": "Tarefa cancelada"}
+    ```
     """
     from celery.result import AsyncResult
     

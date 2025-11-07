@@ -34,12 +34,18 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # Adicionar UV ao PATH permanentemente
 ENV PATH="/root/.local/bin:$PATH"
 
+# ✅ NOVO: Instruir UV a usar PyTorch com CUDA 12.1 (evita CPU-only build)
+ENV UV_INDEX_STRATEGY=unsafe-best-match
+
 # Copiar arquivos do projeto
 COPY pyproject.toml uv.lock* /app/
 COPY . /app/
 
-# Tornar o entrypoint executável
-RUN chmod +x /app/docker-entrypoint.sh
+# ✅ NOVO: Instalar PyTorch com CUDA 12.1 explicitamente ANTES de sincronizar dependencies
+RUN /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 'torch>=2.0.0'
+
+# Tornar os scripts executáveis
+RUN chmod +x /app/docker-entrypoint.sh /app/scripts/gpu_worker.sh
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

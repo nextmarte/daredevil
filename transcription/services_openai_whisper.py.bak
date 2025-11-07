@@ -1,5 +1,6 @@
 """
-Serviço de processamento de áudio e transcrição usando Whisper
+Serviço de processamento de áudio e transcrição usando Faster-Whisper
+Reimplementação do OpenAI Whisper com CTranslate2 - 4x mais rápido!
 """
 import os
 import gc
@@ -9,16 +10,15 @@ from pathlib import Path
 from typing import Optional, Dict
 from contextlib import contextmanager
 
-import whisper
 import torch
+from faster_whisper import WhisperModel, BatchedInferencePipeline
 from django.conf import settings
 
 from .schemas import (
     TranscriptionResult,
     TranscriptionSegment,
     AudioInfo,
-    TranscriptionResponse,
-    TimingMetrics
+    TranscriptionResponse
 )
 from .portuguese_processor import PortugueseBRTextProcessor
 from .video_processor import VideoProcessor
@@ -268,7 +268,7 @@ class WhisperTranscriber:
     def transcribe(
         cls,
         audio_path: str,
-        language: Optional[str] = None,
+        language: str = None,
         model_name: Optional[str] = None
     ) -> TranscriptionResult:
         """
@@ -341,7 +341,7 @@ class WhisperTranscriber:
             return TranscriptionResult(
                 text=full_text,
                 segments=segments,
-                language=str(result.get('language', language)),
+                language=result.get('language', language),
                 duration=result.get('duration', 0)
             )
 
@@ -378,35 +378,12 @@ class WhisperTranscriber:
 
             raise RuntimeError(f"Falha na transcrição: {error_str}")
 
-    @classmethod
-    def transcribe_with_timing(
-        cls,
-        audio_path: str,
-        language: Optional[str] = None,
-        model_name: Optional[str] = None
-    ) -> tuple[TranscriptionResult, float]:
-        """
-        Transcreve arquivo de áudio e retorna o tempo gasto
-
-        Args:
-            audio_path: Caminho do arquivo de áudio (WAV 16kHz)
-            language: Código do idioma (padrão: português brasileiro)
-            model_name: Nome do modelo Whisper (opcional)
-
-        Returns:
-            tuple: (TranscriptionResult, tempo_de_transcrição_em_segundos)
-        """
-        start_time = time.time()
-        result = cls.transcribe(audio_path, language, model_name)
-        elapsed_time = time.time() - start_time
-        return result, elapsed_time
-
 
 class TranscriptionService:
     """Serviço principal de transcrição - orquestra todo o processo"""
 
     @staticmethod
-    def generate_cache_key(file_path: str, model: Optional[str] = None, language: Optional[str] = None) -> str:
+    def generate_cache_key(file_path: str, model: str = None, language: str = None) -> str:
         """
         Gera chave de cache baseada no hash do arquivo e parâmetros
 
@@ -424,12 +401,12 @@ class TranscriptionService:
     @staticmethod
     def process_audio_file(
         file_path: str,
-        language: Optional[str] = None,
+        language: str = None,
         model: Optional[str] = None,
         use_cache: bool = True
     ) -> TranscriptionResponse:
         """
-        Processa arquivo de áudio ou vídeo completo com cache inteligente e métricas de timing
+        Processa arquivo de áudio ou vídeo completo com cache inteligente
 
         Args:
             file_path: Caminho do arquivo de áudio ou vídeo
@@ -438,7 +415,7 @@ class TranscriptionService:
             use_cache: Se True, usa cache quando disponível
 
         Returns:
-            TranscriptionResponse: Resposta completa da transcrição com timing metrics
+            TranscriptionResponse: Resposta completa da transcrição
         """
         # Usar português como padrão
         if language is None:
@@ -447,16 +424,6 @@ class TranscriptionService:
         start_time = time.time()
         temp_wav_path = None
         extension = Path(file_path).suffix.lstrip('.').lower()
-        
-        # Variáveis para tracking de timing
-        time_conversion_start = None
-        time_conversion_end = None
-        time_model_load_start = None
-        time_model_load_end = None
-        time_transcription_start = None
-        time_transcription_end = None
-        time_post_processing_start = None
-        time_post_processing_end = None
 
         # Verificar cache se habilitado
         cache_key = None
@@ -498,7 +465,6 @@ class TranscriptionService:
                         success=cached_result.get("success", True),
                         transcription=transcription,
                         processing_time=round(processing_time, 2),
-                        timing_metrics=cached_result.get("timing_metrics"),
                         audio_info=audio_info,
                         error=cached_result.get("error"),
                         cached=True
@@ -522,7 +488,6 @@ class TranscriptionService:
                         success=False,
                         transcription=None,
                         processing_time=time.time() - start_time,
-                        timing_metrics=None,
                         audio_info=None,
                         error=error_msg or "Arquivo de vídeo inválido"
                     )
@@ -538,20 +503,17 @@ class TranscriptionService:
                 )
 
                 # Usar timeout adaptativo baseado no tamanho do arquivo
-                time_conversion_start = time.time()
                 success, result_msg = VideoProcessor.extract_audio(
                     file_path,
                     temp_wav_path,
-                    timeout=1800  # 30 minutos max
+                    timeout=None  # None = usar timeout adaptativo
                 )
-                time_conversion_end = time.time()
 
                 if not success:
                     return TranscriptionResponse(
                         success=False,
                         transcription=None,
                         processing_time=time.time() - start_time,
-                        timing_metrics=None,
                         audio_info=None,
                         error=f"Erro ao extrair áudio: {result_msg}"
                     )
@@ -580,14 +542,12 @@ class TranscriptionService:
                         success=False,
                         transcription=None,
                         processing_time=time.time() - start_time,
-                        timing_metrics=None,
                         audio_info=None,
-                        error=str(error_msg) if error_msg else "Arquivo de áudio inválido"
+                        error=error_msg
                     )
 
                 # Obter informações do áudio original
-                audio_info_dict = AudioProcessor.get_audio_info(file_path)
-                audio_info = AudioInfo(**audio_info_dict) if audio_info_dict else None
+                audio_info = AudioProcessor.get_audio_info(file_path)
 
                 # Converter para WAV se necessário
                 if extension != 'wav':
@@ -598,48 +558,17 @@ class TranscriptionService:
 
                     if extension == 'mp4':
                         # Extrair áudio de vídeo (arquivo mp4 tratado como áudio)
-                        time_conversion_start = time.time()
                         AudioProcessor.extract_audio_from_video(
                             file_path, temp_wav_path)
-                        time_conversion_end = time.time()
                     else:
-                        # Converter formato de áudio (REMOTA OBRIGATÓRIA)
-                        time_conversion_start = time.time()
-                        converted_path = AudioProcessor.convert_to_wav(file_path, temp_wav_path)
-                        time_conversion_end = time.time()
-                        
-                        # ❌ CRÍTICO: Validar se conversão remota funcionou
-                        if not converted_path or not os.path.exists(converted_path):
-                            logger.error(
-                                f"❌ Falha na conversão remota - arquivo não existe: {converted_path}"
-                            )
-                            return TranscriptionResponse(
-                                success=False,
-                                transcription=None,
-                                processing_time=time.time() - start_time,
-                                timing_metrics=None,
-                                audio_info=None,
-                                error="Falha na conversão remota de áudio. Verifique: 1) Máquina remota (192.168.1.33) online, 2) API em 192.168.1.33:8591 respondendo, 3) FFmpeg instalado na máquina remota"
-                            )
-                        
-                        temp_wav_path = converted_path
+                        # Converter formato de áudio
+                        AudioProcessor.convert_to_wav(file_path, temp_wav_path)
 
                     transcribe_path = temp_wav_path
                 else:
                     transcribe_path = file_path
 
             # Validar que o arquivo WAV tem conteúdo válido antes de transcrever
-            if not transcribe_path or not os.path.exists(transcribe_path):
-                logger.error(f"❌ Arquivo de transcrição não existe: {transcribe_path}")
-                return TranscriptionResponse(
-                    success=False,
-                    transcription=None,
-                    processing_time=time.time() - start_time,
-                    timing_metrics=None,
-                    audio_info=None,
-                    error=f"Arquivo de áudio não encontrado: {transcribe_path}"
-                )
-            
             wav_file_size = os.path.getsize(transcribe_path)
             if wav_file_size < 1000:  # Mínimo de 1KB
                 logger.error(
@@ -648,42 +577,23 @@ class TranscriptionService:
                     success=False,
                     transcription=None,
                     processing_time=time.time() - start_time,
-                    timing_metrics=None,
                     audio_info=None,
                     error=f"Arquivo de áudio inválido ou vazio ({wav_file_size} bytes). Pode ser que o arquivo não tenha faixa de áudio ou esteja corrompido."
                 )
 
-            # Transcrever com timing
-            time_transcription_start = time.time()
-            transcription, transcription_time = WhisperTranscriber.transcribe_with_timing(
+            # Transcrever
+            transcription = WhisperTranscriber.transcribe(
                 transcribe_path,
                 language=language,
                 model_name=model
             )
-            time_transcription_end = time.time()
 
             processing_time = time.time() - start_time
-
-            # Montar métricas de timing
-            timing_metrics = TimingMetrics(
-                conversion_time=round(time_conversion_end - time_conversion_start, 2) if (time_conversion_start and time_conversion_end) else None,
-                model_load_time=None,  # Será capturado internamente pelo WhisperTranscriber
-                transcription_time=round(transcription_time, 2),
-                post_processing_time=None,  # Incluído no transcription_time
-                total_time=round(processing_time, 2)
-            )
-
-            # Log detalhado das métricas
-            if timing_metrics.conversion_time:
-                logger.info(f"⏱️ Tempo de conversão: {timing_metrics.conversion_time:.2f}s")
-            logger.info(f"⏱️ Tempo de transcrição: {timing_metrics.transcription_time:.2f}s")
-            logger.info(f"⏱️ Tempo total: {timing_metrics.total_time:.2f}s")
 
             result = TranscriptionResponse(
                 success=True,
                 transcription=transcription,
                 processing_time=round(processing_time, 2),
-                timing_metrics=timing_metrics,
                 audio_info=audio_info,
                 error=None
             )
@@ -695,9 +605,8 @@ class TranscriptionService:
                     # Converter para dicionário para serialização
                     cache_data = {
                         "success": result.success,
-                        "transcription": transcription.model_dump() if transcription else None,
-                        "audio_info": audio_info.model_dump() if audio_info else None,
-                        "timing_metrics": timing_metrics.model_dump() if timing_metrics else None,
+                        "transcription": transcription.dict() if transcription else None,
+                        "audio_info": audio_info.dict() if audio_info else None,
                         "processing_time": result.processing_time,
                         "error": result.error
                     }
@@ -715,7 +624,6 @@ class TranscriptionService:
                 success=False,
                 transcription=None,
                 processing_time=time.time() - start_time,
-                timing_metrics=None,
                 audio_info=None,
                 error=str(e)
             )

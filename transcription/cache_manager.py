@@ -147,7 +147,7 @@ class TranscriptionCacheManager:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Cache em disco habilitado: {self.cache_dir}")
     
-    def generate_cache_key(self, file_path: str, model: str = None, language: str = None) -> str:
+    def generate_cache_key(self, file_path: str, model: Optional[str] = None, language: Optional[str] = None) -> str:
         """
         Gera chave única de cache baseada no conteúdo do arquivo e parâmetros
         

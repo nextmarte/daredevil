@@ -1,6 +1,16 @@
 #!/bin/bash
 set -e
 
+# 🔗 Garantir resolução DNS de host.docker.internal
+# Necessário quando usando network_mode: host (não herda extra_hosts)
+if ! grep -q "host.docker.internal" /etc/hosts 2>/dev/null; then
+  # Detecta IP do gateway (host)
+  GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
+  if [ -n "$GATEWAY_IP" ]; then
+    echo "$GATEWAY_IP    host.docker.internal" >> /etc/hosts || true
+  fi
+fi
+
 echo "Checking UV installation..."
 if ! command -v uv >/dev/null 2>&1; then
   echo "ERROR: UV not found! Installing UV..."
@@ -44,6 +54,12 @@ run_migrations_with_lock() {
 
 echo "Applying migrations with lock..."
 run_migrations_with_lock
+
+# Verificar se há comando passado como argumento (para Celery/Beat)
+if [ $# -gt 0 ]; then
+  echo "Executando comando passado como argumento: $@"
+  exec uv run "$@"
+fi
 
 # Verificar se está em modo desenvolvimento ou produção
 if [ "$DEBUG" = "1" ]; then

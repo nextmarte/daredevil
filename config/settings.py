@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # Third-party apps
     'django_redis',
+    'django_celery_beat',  # ✅ NOVO: Celery Beat para tasks agendadas
     # Local apps
     'transcription',
 ]
@@ -149,9 +150,24 @@ ENABLE_DISK_CACHE = os.getenv('ENABLE_DISK_CACHE', 'false').lower() == 'true'
 
 # GPU Configuration
 GPU_MEMORY_THRESHOLD = float(os.getenv('GPU_MEMORY_THRESHOLD', 0.9))  # 90% uso antes de fallback CPU
+# ✅ NOVO: Distribuição de GPUs entre workers
+NUM_GPUS = int(os.getenv('NUM_GPUS', 2))  # Número de GPUs disponíveis
+CUDA_VISIBLE_DEVICES = os.getenv('CUDA_VISIBLE_DEVICES', '0,1')  # GPUs visíveis
 
 # Redis Configuration
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+# ========== REMOTE AUDIO CONVERTER CONFIGURATION ==========
+# ✨ NOVO: Integração com serviço remoto de conversão de áudio
+# Máquina remota com mais poder de processamento para conversão de áudio/vídeo
+# 🚀 ATIVO: Use o IP real da máquina host (ex: 192.168.1.29 ou 192.168.1.33)
+REMOTE_CONVERTER_URL = os.getenv(
+    'REMOTE_CONVERTER_URL',
+    'http://192.168.1.33:8591'  # ✅ Use o IP real da sua máquina
+)
+REMOTE_CONVERTER_ENABLED = os.getenv('REMOTE_CONVERTER_ENABLED', 'true').lower() == 'true'
+REMOTE_CONVERTER_TIMEOUT = int(os.getenv('REMOTE_CONVERTER_TIMEOUT', '600'))  # 10 minutos
+REMOTE_CONVERTER_MAX_RETRIES = int(os.getenv('REMOTE_CONVERTER_MAX_RETRIES', '2'))
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', REDIS_URL)
@@ -165,6 +181,36 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutos
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutos (aviso antes do hard limit)
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Processar uma tarefa por vez
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 10  # Reiniciar worker após 10 tarefas (limpar memória)
+
+# ========== PROTEÇÕES CONTRA TRAVAMENTO ==========
+# ✅ NOVO: Celery Beat Schedule - Tarefas agendadas de proteção
+
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-temp-files': {
+        'task': 'transcription.cleanup_temp_files_task',
+        'schedule': 30 * 60,  # A cada 30 minutos
+        'options': {'time_limit': 600, 'soft_time_limit': 500}
+    },
+    'monitor-memory': {
+        'task': 'transcription.monitor_memory_task',
+        'schedule': 5 * 60,  # A cada 5 minutos
+        'options': {'time_limit': 300, 'soft_time_limit': 250}
+    },
+    'unload-gpu-model': {
+        'task': 'transcription.unload_gpu_model_task',
+        'schedule': 60 * 60,  # A cada 1 hora
+        'options': {'time_limit': 60, 'soft_time_limit': 45}
+    },
+}
+
+# ✅ NOVO: Memory Protection Settings - Limites de segurança
+MEMORY_CRITICAL_THRESHOLD_PERCENT = int(os.getenv('MEMORY_CRITICAL_THRESHOLD_PERCENT', 90))  # RAM > 90% = crítico
+MEMORY_WARNING_THRESHOLD_PERCENT = int(os.getenv('MEMORY_WARNING_THRESHOLD_PERCENT', 75))  # RAM > 75% = aviso
+DISK_CRITICAL_THRESHOLD_PERCENT = int(os.getenv('DISK_CRITICAL_THRESHOLD_PERCENT', 90))  # Disco > 90% = crítico
+TEMP_DIR_MAX_SIZE_MB = int(os.getenv('TEMP_DIR_MAX_SIZE_MB', 5000))  # Máximo 5GB em /tmp/daredevil
+
+# ✅ NOVO: Maximum concurrent transcriptions
+MAX_CONCURRENT_TRANSCRIPTIONS = int(os.getenv('MAX_CONCURRENT_TRANSCRIPTIONS', 4))
 
 # Create temp directory if it doesn't exist
 Path(TEMP_AUDIO_DIR).mkdir(parents=True, exist_ok=True)
